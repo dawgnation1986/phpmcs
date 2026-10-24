@@ -889,8 +889,10 @@ final class Server
     private function spawnDrop(int $x, int $y, int $z, int $id, int $count, int $meta, ?Connection $owner): void
     {
         $eid = $this->nextEntityId++;
+        // 原版是 spawnEntityInWorld(new EntityItem(world, x + 0.5, y + 0.5, z + 0.5, stack))
+        // 之前写成 y + 0.25，东西贴在洞底，被草挡住看不见。
         $px = $x + 0.5;
-        $py = $y + 0.25;
+        $py = $y + 0.5;
         $pz = $z + 0.5;
 
         $vx = random_int(-900, 900);
@@ -936,7 +938,18 @@ final class Server
             'at' => $now + 0.5,
             'expire' => $now + 30,
         ];
-        $this->log("  掉落 {$count}x 方块{$id} @ {$x},{$y},{$z} eid={$eid}");
+        $this->log(sprintf(
+            '  掉落 %dx 方块%d @ %d,%d,%d -> 物品 %0.1f,%0.1f,%0.1f eid=%d',
+            $count,
+            $id,
+            $x,
+            $y,
+            $z,
+            $px,
+            $py,
+            $pz,
+            $eid
+        ));
     }
 
     private function processDrops(): void
