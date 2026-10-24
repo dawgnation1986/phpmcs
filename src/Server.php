@@ -372,8 +372,10 @@ final class Server
             }
         }
 
-        // 5) 区块
-        $this->sendChunks($c);
+        // 5) 区块：排队慢慢发。
+        // 以前是 49 个一口气推 3.7MB，客户端接不住（表现就是「进去全是石头，
+        // 放一块方块才啪一下变正常」）。走进去的新区块是每拍 4 个发的，一直是好的。
+        $this->queueChunks($c);
 
         // 6) 出生点 + 位置同步
         $c->send(self::C_SPAWN_POSITION, (new Writer())->long($this->packPosition($sx, $sy, $sz)));
@@ -480,7 +482,7 @@ final class Server
         foreach ($c->chunkQueue as $key => [$cx, $cz]) {
             unset($c->chunkQueue[$key]);
             $this->sendChunkTo($c, $cx, $cz);
-            if (++$n >= 4) {
+            if (++$n >= 8) {
                 break;
             }
         }
