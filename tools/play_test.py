@@ -177,6 +177,7 @@ def main():
             spawn_pos = d
         elif pid == 0x08:
             pos_look = d
+        if pos_look is not None and chunks:
             break
 
     if check(join is not None, "收到 Join Game (0x01)"):
