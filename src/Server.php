@@ -886,7 +886,7 @@ final class Server
         $pz = $z + 0.5;
 
         $vx = random_int(-900, 900);
-        $vy = 1800;
+        $vy = 1600;   // 原版 dropItem 给 0.2
         $vz = random_int(-900, 900);
 
         foreach ($this->players() as $p) {
@@ -942,25 +942,50 @@ final class Server
             // 不模拟的话，服务器只知道东西「出生在哪」，刚扔出去就会被判成
             // 还在脚边，于是立刻又被捡回来。
             if (isset($d['vx'])) {
-                $steps = (int) (($now - $d['step']) / 0.05);
-                if ($steps > 0) {
-                    $steps = min($steps, 5);
-                    for ($i = 0; $i < $steps; $i++) {
-                        // 阻力和重力都得有，否则扔出去的东西以 0.3 格/拍匀速飞到底，
-                        // 永远不落地 —— 玩家走到扔的地方也捡不到。
+                $frames = (int) (($now - $d['step']) / 0.05);
+                if ($frames > 0) {
+                    $frames = min($frames, 5);
+                    $dead = false;
+                    for ($f = 0; $f < $frames; $f++) {
+                        // 阻力 + 重力
                         $d['vx'] = (int) ($d['vx'] * 0.98);
-                        $d['vy'] = (int) (($d['vy'] - 640) * 0.98);
+                        $d['vy'] = (int) (($d['vy'] - 320) * 0.98);   // 原版 this.w -= 0.04f，0.04*8000=320
                         $d['vz'] = (int) ($d['vz'] * 0.98);
-                        $nx = $d['x'] + $d['vx'] / 8000;
-                        $ny = $d['y'] + $d['vy'] / 8000;
-                        $nz = $d['z'] + $d['vz'] / 8000;
-                        if ($this->solidAt($nx, $ny, $nz)) {
+
+                        $mx = $d['vx'] / 8000;
+                        $my = $d['vy'] / 8000;
+                        $mz = $d['vz'] / 8000;
+
+                        // 一帧最多挪 0.4 格，再远就拆成几小步。
+                        // 不拆的话，一步从地面上方跨到地下空洞里，中间的方块被跳过 ——
+                        // 东西就这么穿地掉下去了（日志里 89.1 → 78.5 就是这么来的）。
+                        $far = max(abs($mx), abs($my), abs($mz));
+                        $sub = max(1, (int) ceil($far / 0.4));
+                        $hit = false;
+                        for ($s = 0; $s < $sub; $s++) {
+                            $nx = $d['x'] + $mx / $sub;
+                            $ny = $d['y'] + $my / $sub;
+                            $nz = $d['z'] + $mz / $sub;
+                            if ($this->solidAt($nx, $ny - 0.02, $nz)) {
+                                $hit = true;
+                                break;
+                            }
+                            $d['x'] = $nx;
+                            $d['y'] = $ny;
+                            $d['z'] = $nz;
+                        }
+                        if ($hit) {
                             $d['vx'] = $d['vy'] = $d['vz'] = 0;
                             break;
                         }
-                        $d['x'] = $nx;
-                        $d['y'] = $ny;
-                        $d['z'] = $nz;
+                        if ($d['y'] < -5) {
+                            $dead = true;
+                            break;
+                        }
+                    }
+                    if ($dead) {
+                        unset($this->drops[$eid]);
+                        continue;
                     }
                     $d['step'] = $now;
                     $this->drops[$eid] = $d;
@@ -1094,7 +1119,7 @@ final class Server
             'vy' => $vy,
             'vz' => $vz,
             'step' => $now,
-            'at' => $now + 1.0,   // 自己扔的 1 秒内不捡
+            'at' => $now + 2.0,   // 原版 pickupDelay 40 拍
             'expire' => $now + 30,
         ];
         $this->log("  丢出 {$count}x 方块{$id} @ " . round($px, 1) . ',' . round($py, 1) . ',' . round($pz, 1));
