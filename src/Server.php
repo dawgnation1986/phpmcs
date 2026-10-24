@@ -594,7 +594,16 @@ final class Server
                 $this->log("  挖 status={$status} @ {$x},{$y},{$z} 服务端方块={$state} 模式={$c->gamemode}");
                 // 创造点一下就碎（status 0）；生存等客户端挖完（status 2）
                 if (($c->gamemode === 1 && $status === 0) || ($c->gamemode !== 1 && $status === 2)) {
-                    $this->breakBlock($c, $x, $y, $z);
+                    if ($state === 0) {
+                        // 客户端以为这里有方块，服务端这边是空气。
+                        // 直接把这个「空气」打回去，客户端收到就会把幽灵方块擦掉，
+                        // 不用等玩家再放一个方块来触发区块更新。
+                        $c->send(self::C_BLOCK_CHANGE, (new Writer())
+                            ->long($this->packPosition($x, $y, $z))
+                            ->varInt(0));
+                    } else {
+                        $this->breakBlock($c, $x, $y, $z);
+                    }
                 }
                 break;
 
