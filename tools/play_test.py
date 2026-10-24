@@ -257,8 +257,17 @@ def main():
     check(pid == 0x02, "Alex 登录成功")
     uuid_b, _ = read_string(data, 0)
 
-    ids = [p for p, _ in b.collect(1.0)]
+    bpackets = b.collect(1.0)
+    ids = [p for p, _ in bpackets]
     check(0x01 in ids, "Alex 收到 Join Game")
+
+    # 服务端会记住下线位置，所以不能写死移动目标 —— 否则第二次跑时
+    # 目标就是它现在站的地方，服务器判定「没动」自然不广播。
+    bpos = None
+    for p, d in bpackets:
+        if p == 0x08:
+            bpos = struct.unpack(">ddd", d[0:24])
+    target_x = (bpos[0] + 2.0) if bpos else 3.5
 
     events = a.collect(1.5)
     check(any(p == 0x38 for p, _ in events), "Steve 收到标签列表新增 (0x38)")
@@ -272,14 +281,15 @@ def main():
         b.entity_id = aid
 
     # Alex 走两步，Steve 应该收到 Entity Teleport
-    b.send(0x06, struct.pack(">dddff?", 3.5, 4.0, 0.5, 90.0, 0.0, True))
+    b.send(0x06, struct.pack(">dddff?", target_x, 4.0, 0.5, 90.0, 0.0, True))
     tel = [d for p, d in a.collect(1.0) if p == 0x18]
     check(len(tel) >= 1, f"Steve 收到移动广播 (0x18) x{len(tel)}")
     if tel:
         eid, p = read_varint_buf(tel[-1], 0)
         fx, fy, fz = struct.unpack(">iii", tel[-1][p:p + 12])
         check(eid == b.entity_id, f"广播的实体 id = {eid}（Alex 是 {b.entity_id}）")
-        check(abs(fx / 32 - 3.5) < 0.05, f"广播坐标 x = {fx / 32:.2f}（Alex 走到 3.5）")
+        check(abs(fx / 32 - target_x) < 0.05,
+              f"广播坐标 x = {fx / 32:.2f}（Alex 走到 {target_x:.2f}）")
 
     a.sock.close()
     b.sock.close()

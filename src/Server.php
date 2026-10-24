@@ -566,6 +566,7 @@ final class Server
                 $r->readByte();               // count
                 $damage = $r->readShort();     // 方块 meta 藏在 damage 里
                 [$tx, $ty, $tz] = self::offsetByFace($x, $y, $z, $face);
+                $this->log("  放 {$itemId} @ {$tx},{$ty},{$tz}（点的 {$x},{$y},{$z} 面 {$face}）");
                 $this->changeBlock($tx, $ty, $tz, $itemId, $damage & 0x0F);
                 break;
 
@@ -635,14 +636,24 @@ final class Server
             return;
         }
         $chunk = $this->world->chunk($x >> 4, $z >> 4);
-        if ($id !== 0 && $chunk->blockState($x & 15, $y, $z & 15) !== 0) {
-            return; // 目标不是空气，放不进去
+        $existing = $chunk->blockState($x & 15, $y, $z & 15);
+        if ($id !== 0 && $existing !== 0 && !self::isReplaceable($existing >> 4)) {
+            return; // 目标被实心方块占着，放不进去
+        }
+        if ($existing !== 0) {
+            $this->log("  替换方块 {$existing} @ {$x},{$y},{$z}");
         }
         if (!$chunk->setBlock($x & 15, $y, $z & 15, $id, $meta)) {
             return;
         }
         $this->broadcastBlockChange($x, $y, $z, (($id & 0xFF) << 4) | ($meta & 0x0F));
         $this->markSection($x, $y, $z);
+    }
+
+    /** 草、花、雪层这些原版可以直接盖掉的方块 */
+    private static function isReplaceable(int $id): bool
+    {
+        return in_array($id, [31, 32, 37, 38, 39, 40, 51, 78, 106, 111, 175], true);
     }
 
     /** 打碎方块：广播 + 掉东西 */
