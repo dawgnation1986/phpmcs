@@ -984,6 +984,24 @@ final class Server
             // 原版是「走过去才捡」，不是掉出来就自动吸 —— 离得远就留在原地
             $picker = $this->nearestPlayer($d['x'], $d['y'], $d['z'], 1.8);
             if ($picker === null) {
+                // 只记一次，免得刷屏；用来判断到底是「太远」还是「压根没跑到这」
+                if (!isset($d['logged'])) {
+                    $nearest = PHP_FLOAT_MAX;
+                    foreach ($this->players() as $p) {
+                        $nearest = min($nearest, sqrt(
+                            ($p->x - $d['x']) ** 2 + (($p->y + 0.9) - $d['y']) ** 2 + ($p->z - $d['z']) ** 2
+                        ));
+                    }
+                    $this->log(sprintf(
+                        '  没捡到 eid=%d @ %.1f,%.1f,%.1f 最近玩家距离 %.2f',
+                        $eid,
+                        $d['x'],
+                        $d['y'],
+                        $d['z'],
+                        $nearest
+                    ));
+                    $this->drops[$eid]['logged'] = true;
+                }
                 continue;
             }
 
@@ -1096,14 +1114,20 @@ final class Server
 
     private function nearestPlayer(float $x, float $y, float $z, float $radius): ?Connection
     {
+        // 原版不是算球形距离，而是「玩家碰撞箱往外扩 (1.0, 0.5, 1.0) 再判相交」。
+        // 玩家碰撞箱半宽 0.3、高 1.8，所以横向约 ±1.3、纵向从脚底 -0.6 到头顶 +2.0。
+        // 用盒子比球更好捡，也更接近原版。
         $best = null;
-        $bestDist = $radius;
+        $bestDist = PHP_FLOAT_MAX;
         foreach ($this->players() as $p) {
-            $dx = $p->x - $x;
-            $dy = ($p->y + 0.9) - $y;   // 玩家坐标是脚底，物品大概在腰高
-            $dz = $p->z - $z;
-            $dist = sqrt($dx * $dx + $dy * $dy + $dz * $dz);
-            if ($dist <= $bestDist) {
+            if (abs($p->x - $x) > 1.3 || abs($p->z - $z) > 1.3) {
+                continue;
+            }
+            if ($y < $p->y - 0.6 || $y > $p->y + 2.0) {
+                continue;
+            }
+            $dist = abs($p->x - $x) + abs($p->z - $z);
+            if ($dist < $bestDist) {
                 $bestDist = $dist;
                 $best = $p;
             }
