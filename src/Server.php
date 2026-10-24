@@ -34,6 +34,10 @@ final class Connection
     public bool $flying = false;
     /** 手上拿的是快捷栏第几格（0-8），客户端切物品时会告诉我们 */
     public int $heldSlot = 0;
+    /** @var array<string, bool> 已经发过区块的 "cx,cz" */
+    public array $sentChunks = [];
+    /** @var array<string, array{0:int,1:int}> 等着补发的区块 */
+    public array $chunkQueue = [];
     /** @var array<int, array{id:int,count:int,damage:int}> 槽位 => 物品 */
     public array $inventory = [];
 
@@ -413,6 +417,19 @@ final class Server
         return $out;
     }
 
+    private function sendChunkTo(Connection $c, int $cx, int $cz): void
+    {
+        [$mask, $data] = $this->world->chunkPayload($cx, $cz);
+        $c->send(self::C_CHUNK_DATA, (new Writer())
+            ->int($cx)
+            ->int($cz)
+            ->bool(true)                // groundUp
+            ->short($mask)
+            ->varInt(strlen($data))
+            ->raw($data));
+        $c->sentChunks[$cx . ',' . $cz] = true;
+    }
+
     private function sendChunks(Connection $c): void
     {
         $cx0 = ((int) floor($c->x)) >> 4;
@@ -424,15 +441,8 @@ final class Server
 
         for ($dx = -$r; $dx <= $r; $dx++) {
             for ($dz = -$r; $dz <= $r; $dz++) {
-                [$mask, $data] = $this->world->chunkPayload($cx0 + $dx, $cz0 + $dz);
                 $before = strlen($c->out);
-                $c->send(self::C_CHUNK_DATA, (new Writer())
-                    ->int($cx0 + $dx)
-                    ->int($cz0 + $dz)
-                    ->bool(true)            // groundUp
-                    ->short($mask)
-                    ->varInt(strlen($data))
-                    ->raw($data));
+                $this->sendChunkTo($c, $cx0 + $dx, $cz0 + $dz);
                 $bytes += strlen($c->out) - $before;
                 $sent++;
             }
@@ -440,6 +450,38 @@ final class Server
 
         $ms = (microtime(true) - $t0) * 1000;
         $this->log(sprintf('  发送区块 %d 个，%d KB，耗时 %.0f ms', $sent, round($bytes / 1024), $ms));
+    }
+
+    /** 走进新区块时，把视野里还没发过的区块排进队列。 */
+    private function queueChunks(Connection $c): void
+    {
+        $cx0 = ((int) floor($c->x)) >> 4;
+        $cz0 = ((int) floor($c->z)) >> 4;
+        $r = $this->viewDistance;
+
+        for ($dx = -$r; $dx <= $r; $dx++) {
+            for ($dz = -$r; $dz <= $r; $dz++) {
+                $cx = $cx0 + $dx;
+                $cz = $cz0 + $dz;
+                $key = $cx . ',' . $cz;
+                if (!isset($c->sentChunks[$key]) && !isset($c->chunkQueue[$key])) {
+                    $c->chunkQueue[$key] = [$cx, $cz];
+                }
+            }
+        }
+    }
+
+    /** 每拍最多补 4 个，别一次推几百 KB 把线程堵住。 */
+    private function flushChunkQueue(Connection $c): void
+    {
+        $n = 0;
+        foreach ($c->chunkQueue as $key => [$cx, $cz]) {
+            unset($c->chunkQueue[$key]);
+            $this->sendChunkTo($c, $cx, $cz);
+            if (++$n >= 4) {
+                break;
+            }
+        }
     }
 
     private function sendTabAdd(Connection $to, Connection $who): void
@@ -753,6 +795,8 @@ final class Server
         ?float $pitch,
         bool $onGround
     ): void {
+        $lastChunkX = $c->x / 16;
+        $lastChunkZ = $c->z / 16;
         $moved = false;
         if ($x !== null && ($x !== $c->x || $y !== $c->y || $z !== $c->z)) {
             $c->x = $x;
@@ -765,6 +809,13 @@ final class Server
             $c->pitch = (float) $pitch;
         }
         $c->onGround = $onGround;
+
+        // 换了区块就把视野里缺的补上，不然走远了前面就是虚空
+        $oldKey = ((int) floor($lastChunkX)) . ',' . ((int) floor($lastChunkZ));
+        $newKey = (((int) floor($c->x)) >> 4) . ',' . (((int) floor($c->z)) >> 4);
+        if ($oldKey !== $newKey) {
+            $this->queueChunks($c);
+        }
 
         foreach ($this->players() as $other) {
             if ($other === $c) {
@@ -1107,6 +1158,9 @@ final class Server
                 $this->sendChat($c, ['text' => '/gm <0|1|2|3>  切换模式（0 生存 / 1 创造）', 'color' => 'gray'], 1);
                 $this->sendChat($c, ['text' => '/spawn  回到出生点', 'color' => 'gray'], 1);
                 $this->sendChat($c, ['text' => '/who  看看谁在线', 'color' => 'gray'], 1);
+                $this->sendChat($c, ['text' => '/block x y z  问服务器这个坐标是什么方块', 'color' => 'gray'], 1);
+                $this->sendChat($c, ['text' => '/save  立刻存盘', 'color' => 'gray'], 1);
+                $this->sendChat($c, ['text' => '/reload  丢掉内存缓存、按磁盘重发（验证存盘）', 'color' => 'gray'], 1);
                 break;
 
             case 'gm':
@@ -1146,6 +1200,54 @@ final class Server
                     ->double($c->x)->double($c->y)->double($c->z)
                     ->float(0)->float(0)->byte(0));
                 $this->sendChat($c, ['text' => '已回到出生点', 'color' => 'green'], 1);
+                break;
+
+            case 'block':
+                if (count($parts) < 3) {
+                    $this->sendChat($c, ['text' => '用法：/block x y z', 'color' => 'red'], 1);
+                    break;
+                }
+                $bx = (int) $parts[0];
+                $by = (int) $parts[1];
+                $bz = (int) $parts[2];
+                $state = $this->world->chunk($bx >> 4, $bz >> 4)
+                    ->blockState($bx & 15, $by, $bz & 15);
+                $this->sendChat($c, [
+                    'text' => sprintf(
+                        '服务端认为 (%d,%d,%d) = 方块 %d meta %d %s',
+                        $bx,
+                        $by,
+                        $bz,
+                        $state >> 4,
+                        $state & 15,
+                        $state === 0 ? '（空气）' : ''
+                    ),
+                    'color' => 'yellow',
+                ], 1);
+                break;
+
+            case 'reload':
+                $saved = $this->world->save();
+                $n = $this->world->forgetChunks();
+                foreach ($this->players() as $p) {
+                    $p->sentChunks = [];
+                    $p->chunkQueue = [];
+                    $this->queueChunks($p);
+                }
+                $this->sendChat($c, [
+                    'text' => "已存盘 {$saved} 个，丢掉内存 {$n} 个区块，正在按磁盘重发",
+                    'color' => 'green',
+                ], 1);
+                $this->log("手动 reload：存盘 {$saved}，清缓存 {$n}");
+                break;
+
+            case 'save':
+                $n = $this->world->save();
+                $this->sendChat($c, [
+                    'text' => "已存盘 {$n} 个区块",
+                    'color' => 'green',
+                ], 1);
+                $this->log("手动存盘 {$n} 个区块");
                 break;
 
             case 'who':
@@ -1239,6 +1341,12 @@ final class Server
 
         $this->processDrops();
         $this->flushSections();
+
+        foreach ($this->players() as $p) {
+            if ($p->chunkQueue !== []) {
+                $this->flushChunkQueue($p);
+            }
+        }
 
         // 改了方块两秒内落盘：进程被硬关也最多丢两秒
         if ($now - $this->lastSave >= 2) {
@@ -1346,6 +1454,14 @@ final class Server
     public function log(string $msg): void
     {
         $t = sprintf('%.3f', microtime(true) - $this->startedAt);
-        fwrite(STDOUT, "[{$t}s] {$msg}\n");
+        $line = '[' . date('H:i:s') . "][{$t}s] {$msg}\n";
+        fwrite(STDOUT, $line);
+
+        // 同时落一份文件：终端滚上去就什么都看不见了
+        $dir = __DIR__ . '/../logs';
+        if (!is_dir($dir)) {
+            @mkdir($dir, 0777, true);
+        }
+        @file_put_contents($dir . '/server.log', $line, FILE_APPEND);
     }
 }

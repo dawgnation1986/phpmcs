@@ -9,3 +9,5 @@ cache/
 .workbuddy/
 __pycache__/
 *.pyc
+.cache/
+logs/
