@@ -1,0 +1,52 @@
+<?php
+declare(strict_types=1);
+
+/**
+ * 启动入口：
+ *   php bin/server.php [端口] [MOTD] [存档目录]
+ * 例：php bin/server.php 25565 "PHP 写的 1.8.9" world
+ *
+ * 存档目录不给就用项目下的 world/；目录里没有 level.dat 就按 Anvil 格式新建一份，
+ * 新建出来的是标准存档，可以直接用 Minecraft 单机打开。
+ */
+
+require __DIR__ . '/../src/Protocol.php';
+require __DIR__ . '/../src/Nbt/Tag.php';
+require __DIR__ . '/../src/Nbt/Nbt.php';
+require __DIR__ . '/../src/World/Chunk.php';
+require __DIR__ . '/../src/World/AnvilWorld.php';
+require __DIR__ . '/../src/Skin/Skins.php';
+require __DIR__ . '/../src/Server.php';
+
+$port = 25565;
+if (isset($argv[1]) && $argv[1] !== '') {
+    $port = (int) $argv[1];
+} elseif (getenv('MC_PORT') !== false && getenv('MC_PORT') !== '') {
+    $port = (int) getenv('MC_PORT');
+}
+
+$motd = $argv[2] ?? 'PHP 写的 1.8.9 服务器';
+$worldDir = $argv[3] ?? (__DIR__ . '/../world');
+
+$world = new PhpMc\World\AnvilWorld($worldDir);
+
+// 皮肤白名单：游戏内名字 => 要查的正版名。离线号不要往里加，
+// 否则会查到同名的陌生人，把人家的皮肤贴到你头上。
+$allow = [];
+$skinConf = __DIR__ . '/../skins.conf.json';
+if (is_file($skinConf)) {
+    $json = json_decode((string) @file_get_contents($skinConf), true);
+    if (is_array($json)) {
+        foreach ($json as $k => $v) {
+            if (is_string($v) && $v !== '' && is_string($k) && ($k[0] ?? '') !== '_') {
+                $allow[strtolower($k)] = $v;
+            }
+        }
+    }
+}
+
+$skins = new PhpMc\Skin\Skins(__DIR__ . '/../cache/skins.json', $allow);
+$gamemode = $world->created ? 1 : $world->gameType();
+
+$server = new PhpMc\Server('0.0.0.0', $port, $motd, $world, $skins, 20, $gamemode, 3);
+$server->run();

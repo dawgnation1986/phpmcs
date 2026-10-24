@@ -1,0 +1,13 @@
+# 存档是玩家的东西，不进仓库
+world/
+world_real/
+world_src/
+backup/
+# 运行时缓存（皮肤缓存里有玩家名）
+cache/
+# 本机记忆/会话数据
+.workbuddy/
+__pycache__/
+*.pyc
+.cache/
+logs/
