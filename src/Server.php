@@ -886,60 +886,33 @@ final class Server
         };
     }
 
+    /**
+     * 方块打碎掉出来的东西。
+     * 直接复用 throwItem 那条路 —— 「扔出来的」客户端能画出来，「挖出来的」
+     * 画不出来，两边原本是两段几乎一样的发包代码，那就别留两份。
+     */
     private function spawnDrop(int $x, int $y, int $z, int $id, int $count, int $meta, ?Connection $owner): void
     {
-        $eid = $this->nextEntityId++;
-        // 原版是 spawnEntityInWorld(new EntityItem(world, x + 0.5, y + 0.5, z + 0.5, stack))
-        // 之前写成 y + 0.25，东西贴在洞底，被草挡住看不见。
+        // 原版：spawnEntityInWorld(new EntityItem(world, x + 0.5, y + 0.5, z + 0.5, stack))
         $px = $x + 0.5;
         $py = $y + 0.5;
         $pz = $z + 0.5;
 
-        $vx = random_int(-900, 900);
-        $vy = 1600;   // 原版 dropItem 给 0.2
-        $vz = random_int(-900, 900);
+        $this->throwItem(
+            $px,
+            $py,
+            $pz,
+            $id,
+            $count,
+            $meta,
+            random_int(-900, 900),
+            1600,
+            random_int(-900, 900),
+            0.5
+        );
 
-        foreach ($this->players() as $p) {
-            // 1.8 的 Spawn Object 无论 data 是不是 0，速度三个 short 都永远要跟
-            // （1.9 才改成 data>0 才带）。少写这 6 字节，客户端整包解析失败，
-            // 现象就是「方块挖了，但什么都没掉出来」。
-            $p->send(self::C_SPAWN_OBJECT, (new Writer())
-                ->varInt($eid)
-                ->byte(2)                    // 2 = 物品
-                ->int((int) ($px * 32))
-                ->int((int) ($py * 32))
-                ->int((int) ($pz * 32))
-                ->byte(0)->byte(0)
-                ->int(1)                     // data≠0，表示速度有效
-                ->short($vx)->short($vy)->short($vz));
-            $p->send(self::C_ENTITY_METADATA, (new Writer())
-                ->varInt($eid)
-                // 1.8 的元数据是「一个字节」：高 3 位类型、低 5 位索引。
-                // 这里 = 类型 5(Slot) << 5 | 索引 10，算出来 0xAA。
-                // 写成「索引 + 类型」两个字节是 1.9 的格式，1.8 客户端会读成
-                // 索引 10、类型 0(Byte)，渲染时 Byte 强转 ItemStack 直接崩溃。
-                ->byte((5 << 5) | 10)
-                ->short($id)->byte($count)->short($meta)->byte(0)
-                ->unsignedByte(0x7F));
-        }
-
-        $now = microtime(true);
-        $this->drops[$eid] = [
-            'id' => $id,
-            'count' => $count,
-            'meta' => $meta,
-            'x' => $px,
-            'y' => $py,
-            'z' => $pz,
-            'vx' => $vx,
-            'vy' => $vy,
-            'vz' => $vz,
-            'step' => $now,
-            'at' => $now + 0.5,
-            'expire' => $now + 30,
-        ];
         $this->log(sprintf(
-            '  掉落 %dx 方块%d @ %d,%d,%d -> 物品 %0.1f,%0.1f,%0.1f eid=%d',
+            '  掉落 %dx 方块%d @ %d,%d,%d -> 物品 %0.1f,%0.1f,%0.1f',
             $count,
             $id,
             $x,
@@ -947,8 +920,7 @@ final class Server
             $z,
             $px,
             $py,
-            $pz,
-            $eid
+            $pz
         ));
     }
 
@@ -1125,7 +1097,8 @@ final class Server
         int $meta,
         int $vx,
         int $vy,
-        int $vz
+        int $vz,
+        float $delay = 2.0
     ): void {
         $eid = $this->nextEntityId++;
 
@@ -1158,7 +1131,7 @@ final class Server
             'vy' => $vy,
             'vz' => $vz,
             'step' => $now,
-            'at' => $now + 2.0,   // 原版 pickupDelay 40 拍
+            'at' => $now + $delay,
             'expire' => $now + 30,
         ];
         $this->log("  丢出 {$count}x 方块{$id} @ " . round($px, 1) . ',' . round($py, 1) . ',' . round($pz, 1));
