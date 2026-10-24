@@ -89,8 +89,8 @@ def main():
         cx, cz = struct.unpack(">ii", sec[-1][0:8])
         ground = sec[-1][8]
         mask = struct.unpack(">H", sec[-1][9:11])[0]
-        check(ground == 0, f"groundUp={ground}（只更新一段）")
-        check((cx, cz) == (0, 0) and mask == 1, f"区块={cx},{cz} mask={mask:#06x}")
+        check(ground == 1, f"groundUp={ground}（整块重发，分段更新客户端不认）")
+        check((cx, cz) == (0, 0) and mask != 0, f"区块={cx},{cz} mask={mask:#06x}")
 
     so = [d for p, d in events if p == 0x0E]
     if check(len(so) >= 1, "掉落物实体生成了 (0x0E)"):

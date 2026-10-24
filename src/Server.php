@@ -121,6 +121,8 @@ final class Server
     private array $drops = [];
     /** @var array<string, array{0:int,1:int,2:int}> 改了方块的 section，要重发给客户端 */
     private array $dirtySections = [];
+    /** @var array<string, float> 上次整块重发的时间，用来做节流 */
+    private array $lastChunkPush = [];
     private float $startedAt;
     private float $lastKeepAlive = 0.0;
     private float $lastSave = 0.0;
@@ -750,36 +752,40 @@ final class Server
      */
     private function markSection(int $x, int $y, int $z): void
     {
+        // 记整个区块，不再记某一段 —— 分段更新（groundUp=false）客户端不认，
+        // 只有整块重发才会刷新。玩家实测：走进去的新区块正常，改过的老区块不刷新。
         $cx = $x >> 4;
         $cz = $z >> 4;
-        $sy = $y >> 4;
-        $this->dirtySections[$cx . ',' . $cz . ',' . $sy] = [$cx, $cz, $sy];
+        $this->dirtySections[$cx . ',' . $cz] = [$cx, $cz];
     }
 
-    /** 每拍最多补发几个 section，别把带宽打爆。 */
+    /** 每拍最多重发两个区块，别把带宽打爆；同一个区块 0.15 秒内不重复发。 */
     private function flushSections(): void
     {
         if ($this->dirtySections === []) {
             return;
         }
+        $now = microtime(true);
         $sent = 0;
-        foreach ($this->dirtySections as $key => [$cx, $cz, $sy]) {
-            unset($this->dirtySections[$key]);
-            $data = $this->world->chunk($cx, $cz)->sectionData($sy);
-            if ($data === null) {
+        foreach ($this->dirtySections as $key => [$cx, $cz]) {
+            if (($this->lastChunkPush[$key] ?? 0.0) > $now - 0.15) {
                 continue;
             }
+            unset($this->dirtySections[$key]);
+            $this->lastChunkPush[$key] = $now;
+
+            [$mask, $data] = $this->world->chunkPayload($cx, $cz);
             $packet = (new Writer())
                 ->int($cx)
                 ->int($cz)
-                ->bool(false)            // groundUp=false：只更新这一段
-                ->short(1 << $sy)
+                ->bool(true)                 // 整块发，客户端才认
+                ->short($mask)
                 ->varInt(strlen($data))
                 ->raw($data);
             foreach ($this->players() as $p) {
                 $p->send(self::C_CHUNK_DATA, $packet);
             }
-            if (++$sent >= 4) {
+            if (++$sent >= 2) {
                 break;
             }
         }
@@ -1011,19 +1017,30 @@ final class Server
             if ($picker === null) {
                 // 只记一次，免得刷屏；用来判断到底是「太远」还是「压根没跑到这」
                 if (!isset($d['logged'])) {
-                    $nearest = PHP_FLOAT_MAX;
+                    $best = null;
+                    $bestD = PHP_FLOAT_MAX;
                     foreach ($this->players() as $p) {
-                        $nearest = min($nearest, sqrt(
+                        $dd = sqrt(
                             ($p->x - $d['x']) ** 2 + (($p->y + 0.9) - $d['y']) ** 2 + ($p->z - $d['z']) ** 2
-                        ));
+                        );
+                        if ($dd < $bestD) {
+                            $bestD = $dd;
+                            $best = $p;
+                        }
                     }
                     $this->log(sprintf(
-                        '  没捡到 eid=%d @ %.1f,%.1f,%.1f 最近玩家距离 %.2f',
+                        '  没捡到 eid=%d @ %.1f,%.1f,%.1f | 玩家 %s @ %.1f,%.1f,%.1f dx=%.2f dy=%.2f dz=%.2f',
                         $eid,
                         $d['x'],
                         $d['y'],
                         $d['z'],
-                        $nearest
+                        $best?->username ?? '-',
+                        $best?->x ?? 0,
+                        $best?->y ?? 0,
+                        $best?->z ?? 0,
+                        $best === null ? 0 : $best->x - $d['x'],
+                        $best === null ? 0 : ($best->y + 0.9) - $d['y'],
+                        $best === null ? 0 : $best->z - $d['z']
                     ));
                     $this->drops[$eid]['logged'] = true;
                 }
@@ -1039,6 +1056,13 @@ final class Server
                     ->varInt(1)->varInt($eid));
             }
             $this->giveItem($picker, $d['id'], $d['count'], $d['meta']);
+            $this->log(sprintf(
+                '  捡到 eid=%d 方块%d x%d -> %s',
+                $eid,
+                $d['id'],
+                $d['count'],
+                $picker->username
+            ));
             unset($this->drops[$eid]);
         }
     }
