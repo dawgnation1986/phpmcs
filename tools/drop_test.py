@@ -83,12 +83,10 @@ def main():
         state, _ = read_varint_buf(bc[-1], 8)
         check(state == 0, f"状态={state}")
 
-    # 改方块只补发「这一段」（groundUp=false）用来送光照，
-    # 绝不整块重发（groundUp=true 会让客户端重载 chunk，清掉掉落物实体）。
+    # 改方块只发 Block Change：整块重发会清掉落物实体，段重发会把
+    # 存档里的旧光照盖到客户端上（挖完反而变黑）。
     sec = [d for p, d in events if p == 0x21]
-    if check(len(sec) >= 1, f"收到段更新 x{len(sec)}"):
-        ground = sec[-1][8]
-        check(ground == 0, f"groundUp={ground}（只发段，不重发整块）")
+    check(not sec, f"改方块后不重发区块（收到 {len(sec)} 个 0x21）")
 
     so = [d for p, d in events if p == 0x0E]
     if check(len(so) >= 1, "掉落物实体生成了 (0x0E)"):
