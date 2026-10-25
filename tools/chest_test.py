@@ -111,7 +111,7 @@ def main():
     # 4) 关窗口
     c.send(0x0D, bytes([1]))
     ev = c.collect(0.8)
-    check(any(p == 0x31 for p, _ in ev), "收到 Close Window (0x31)")
+    check(any(p == 0x2E for p, _ in ev), "收到 Close Window (0x2E)")
 
     # 5) 重新打开，东西还在
     c.send(0x08, struct.pack(">q", pack_pos(cx, 4, cz)) + bytes([1]) + struct.pack(">h", -1))

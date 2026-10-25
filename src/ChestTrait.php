@@ -102,7 +102,9 @@ trait ChestTrait
             return;
         }
         $this->chests->save($c->chest['x'], $c->chest['y'], $c->chest['z'], $c->chest['slots']);
-        $c->send(0x31, (new Writer())->byte(1));   // Close Window
+        // 1.8: 0x2E 才是 Close Window；0x31 是 Window Property（要读两个 short），
+        // 发错了客户端会 IndexOutOfBounds 直接崩。
+        $c->send(0x2E, (new Writer())->byte(1));
         $c->chest = null;
     }
 
