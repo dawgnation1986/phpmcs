@@ -30,6 +30,10 @@ final class Connection
     public string $uuid = '';
     /** @var array{value:string,signature:string}|null */
     public ?array $textures = null;
+    /** @var array{x:int,y:int,z:int,slots:array}|null 打开着的箱子 */
+    public ?array $chest = null;
+    /** 进服 1 秒后补发一次背包：有的客户端会忽略第一次 Window Items */
+    public float $resendInvAt = 0.0;
     public int $gamemode = 1;
     public bool $flying = false;
     /** 手上拿的是快捷栏第几格（0-8），客户端切物品时会告诉我们 */
@@ -380,6 +384,8 @@ final class Server
         // 背包：不发这个，重连之后东西就「没了」（客户端从空背包开始）
         $c->inventory = $this->world->inventory($c->username);
         $this->sendPlayerInventory($c);
+        $c->resendInvAt = microtime(true) + 1.0;
+        $this->log("  载入背包 " . count($c->inventory) . ' 格');
 
         // 4) 标签列表 / 互相看见
         foreach ($this->players() as $other) {
@@ -1376,6 +1382,17 @@ final class Server
                 $this->log("手动 reload：存盘 {$saved}，清缓存 {$n}");
                 break;
 
+            case 'inv':
+                $list = [];
+                foreach ($c->inventory as $slot => $item) {
+                    $list[] = $slot . ':' . $item['id'] . 'x' . $item['count'];
+                }
+                $this->sendChat($c, [
+                    'text' => '服务端记录的背包：' . ($list === [] ? '空' : implode(', ', $list)),
+                    'color' => 'yellow',
+                ], 1);
+                break;
+
             case 'save':
                 $n = $this->world->save();
                 $this->sendChat($c, [
@@ -1523,6 +1540,10 @@ final class Server
             if ($p->chunkQueue !== []) {
                 $this->flushChunkQueue($p);
             }
+            if ($p->resendInvAt > 0 && $now >= $p->resendInvAt) {
+                $p->resendInvAt = 0.0;
+                $this->sendPlayerInventory($p);
+            }
         }
 
         // 改了方块两秒内落盘：进程被硬关也最多丢两秒
@@ -1559,6 +1580,7 @@ final class Server
                 );
                 $c->chest = null;
             }
+            $this->log("  存背包 " . count($c->inventory) . ' 格');
             $this->world->rememberInventory($c->username, $c->inventory);
             $this->world->rememberPosition(
                 $c->username,
