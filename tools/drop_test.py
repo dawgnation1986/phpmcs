@@ -83,14 +83,10 @@ def main():
         state, _ = read_varint_buf(bc[-1], 8)
         check(state == 0, f"状态={state}")
 
-    # 1.8 没有光照包，只能重发这一段区块，客户端才会重新算光
+    # 改方块不能重发区块数据：客户端会重新加载那个 chunk，把刚生成的
+    # 掉落物实体一起清掉（表现就是「能捡但不显示」）。原版只发 Block Change。
     sec = [d for p, d in events if p == 0x21]
-    if check(len(sec) >= 1, "收到区块段更新 (0x21)"):
-        cx, cz = struct.unpack(">ii", sec[-1][0:8])
-        ground = sec[-1][8]
-        mask = struct.unpack(">H", sec[-1][9:11])[0]
-        check(ground == 1, f"groundUp={ground}（整块重发，分段更新客户端不认）")
-        check((cx, cz) == (0, 0) and mask != 0, f"区块={cx},{cz} mask={mask:#06x}")
+    check(not sec, f"改方块后没有重发区块（收到 {len(sec)} 个 0x21）")
 
     so = [d for p, d in events if p == 0x0E]
     if check(len(so) >= 1, "掉落物实体生成了 (0x0E)"):
