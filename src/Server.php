@@ -34,6 +34,10 @@ final class Connection
     public bool $flying = false;
     /** 手上拿的是快捷栏第几格（0-8），客户端切物品时会告诉我们 */
     public int $heldSlot = 0;
+    public float $health = 20.0;
+    public int $food = 20;
+    /** 开始下落时的高度，落地时用来算摔伤 */
+    public float $fallFrom = -1.0;   // <0 表示没在下落
     /** @var array<string, bool> 已经发过区块的 "cx,cz" */
     public array $sentChunks = [];
     /** @var array<string, array{0:int,1:int}> 等着补发的区块 */
@@ -106,6 +110,7 @@ final class Server
     private const C_SPAWN_OBJECT = 0x0E;
     private const C_ENTITY_VELOCITY = 0x12;
     private const C_ENTITY_METADATA = 0x1C;
+    private const C_UPDATE_HEALTH = 0x06;
     private const C_BLOCK_CHANGE = 0x23;
     private const C_CHANGE_GAME_STATE = 0x2B;
     private const C_SET_SLOT = 0x2F;
@@ -121,8 +126,8 @@ final class Server
     private array $drops = [];
     /** @var array<string, array{0:int,1:int,2:int}> 改了方块的 section，要重发给客户端 */
     private array $dirtySections = [];
-    /** @var array<string, float> 上次整块重发的时间，用来做节流 */
-    private array $lastChunkPush = [];
+    /** @var array<string, float> 上次补发段的时间，用来做节流 */
+    private array $lastSectionPush = [];
     private float $startedAt;
     private float $lastKeepAlive = 0.0;
     private float $lastSave = 0.0;
@@ -361,6 +366,10 @@ final class Server
 
         // 3) 能力：不发这个，创造模式等于没开（不能飞、不是无敌）
         $this->sendAbilities($c);
+
+        // 血量（不发病客户端默认满血，但要让它知道是服务端在管）
+        $c->health = 20.0;
+        $this->sendHealth($c);
 
         // 4) 标签列表 / 互相看见
         foreach ($this->players() as $other) {
@@ -754,14 +763,20 @@ final class Server
      */
     private function markSection(int $x, int $y, int $z): void
     {
-        // 故意什么都不做。
-        // 原版改方块只发 Block Change，从不重发区块数据。
-        // 之前这里改方块后整块重发（groundUp=true），客户端会重新加载那个 chunk，
-        // 顺手把刚生成掉落物实体清掉 —— 表现就是「东西能捡但不显示」。
-        // 分段更新（groundUp=false）也不能发，会把客户端的 chunk 读串。
+        // 只补发「这一段」，不重发整块。
+        // 整块（groundUp=true）会让客户端重载 chunk，把刚生成的掉落物实体清掉，
+        // 所以只用 groundUp=false 的段更新，专门用来把新光照送过去。
+        $cx = $x >> 4;
+        $cz = $z >> 4;
+        $sy = $y >> 4;
+        $this->dirtySections[$cx . ',' . $cz . ',' . $sy] = [$cx, $cz, $sy];
     }
 
-    /** 每拍最多重发两个区块，别把带宽打爆；同一个区块 0.15 秒内不重复发。 */
+    /**
+     * 把改过的段补发一次（groundUp=false）。
+     * 1.8 没有单独的光照包，客户端也不会自己重算天空光，
+     * 所以挖开的洞要么全黑、要么靠这一步把新光照送过去。
+     */
     private function flushSections(): void
     {
         if ($this->dirtySections === []) {
@@ -769,25 +784,28 @@ final class Server
         }
         $now = microtime(true);
         $sent = 0;
-        foreach ($this->dirtySections as $key => [$cx, $cz]) {
-            if (($this->lastChunkPush[$key] ?? 0.0) > $now - 0.15) {
+        foreach ($this->dirtySections as $key => [$cx, $cz, $sy]) {
+            if (($this->lastSectionPush[$key] ?? 0.0) > $now - 0.12) {
                 continue;
             }
             unset($this->dirtySections[$key]);
-            $this->lastChunkPush[$key] = $now;
+            $this->lastSectionPush[$key] = $now;
 
-            [$mask, $data] = $this->world->chunkPayload($cx, $cz);
+            $data = $this->world->chunk($cx, $cz)->sectionPayload($sy);
+            if ($data === null) {
+                continue;
+            }
             $packet = (new Writer())
                 ->int($cx)
                 ->int($cz)
-                ->bool(true)                 // 整块发，客户端才认
-                ->short($mask)
+                ->bool(false)                // 只更新这一段
+                ->short(1 << $sy)
                 ->varInt(strlen($data))
                 ->raw($data);
             foreach ($this->players() as $p) {
                 $p->send(self::C_CHUNK_DATA, $packet);
             }
-            if (++$sent >= 2) {
+            if (++$sent >= 4) {
                 break;
             }
         }
@@ -825,6 +843,19 @@ final class Server
             $c->yaw = $yaw;
             $c->pitch = (float) $pitch;
         }
+
+        // 掉落伤害：离地时记住高度，落地时按 (高度差 - 3) 算。
+        // 原版 EntityPlayer.fall() 是 ceil(距离 - 3)，创造模式不摔伤。
+        if (! $onGround && $moved) {
+            $c->fallFrom = $c->fallFrom < 0 ? $c->y : max($c->fallFrom, $c->y);
+        } elseif ($onGround && $c->fallFrom >= 0) {
+            $fall = $c->fallFrom - $c->y;
+            $c->fallFrom = -1.0;
+            if ($fall > 3.0) {
+                $this->damage($c, (int) ceil($fall - 3.0));
+            }
+        }
+
         $c->onGround = $onGround;
 
         // 换了区块就把视野里缺的补上，不然走远了前面就是虚空
@@ -1336,6 +1367,39 @@ final class Server
 
     // ---------------- 杂项 ----------------
 
+    private function sendHealth(Connection $c): void
+    {
+        $c->send(self::C_UPDATE_HEALTH, (new Writer())
+            ->float($c->health)
+            ->varInt($c->food)
+            ->float(5.0));
+    }
+
+    /** 掉血；掉到 0 就回出生点（不做死亡界面，先把机制跑通）。 */
+    private function damage(Connection $c, int $dmg): void
+    {
+        if ($dmg <= 0 || $c->gamemode === 1) {
+            return;
+        }
+        $c->health = max(0.0, $c->health - $dmg);
+        $c->send(self::C_UPDATE_HEALTH, (new Writer())
+            ->float($c->health)->varInt($c->food)->float(5.0));
+        $this->log("  {$c->username} 掉血 {$dmg}，剩 {$c->health}");
+
+        if ($c->health <= 0.0) {
+            [$sx, $sy, $sz] = $this->world->spawnPoint();
+            $c->x = $sx + 0.5;
+            $c->y = (float) $sy;
+            $c->z = $sz + 0.5;
+            $c->health = 20.0;
+            $c->fallFrom = -1.0;
+            $c->send(self::C_POS_LOOK, (new Writer())
+                ->double($c->x)->double($c->y)->double($c->z)
+                ->float(0)->float(0)->byte(0));
+            $this->sendHealth($c);
+        }
+    }
+
     private function sendChat(Connection $c, array $component, int $position = 1): void
     {
         $json = json_encode($component, JSON_UNESCAPED_UNICODE);
@@ -1414,6 +1478,7 @@ final class Server
         }
 
         $this->processDrops();
+        $this->flushSections();
 
         foreach ($this->players() as $p) {
             if ($p->chunkQueue !== []) {

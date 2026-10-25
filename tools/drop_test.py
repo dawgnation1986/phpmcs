@@ -83,10 +83,12 @@ def main():
         state, _ = read_varint_buf(bc[-1], 8)
         check(state == 0, f"状态={state}")
 
-    # 改方块不能重发区块数据：客户端会重新加载那个 chunk，把刚生成的
-    # 掉落物实体一起清掉（表现就是「能捡但不显示」）。原版只发 Block Change。
+    # 改方块只补发「这一段」（groundUp=false）用来送光照，
+    # 绝不整块重发（groundUp=true 会让客户端重载 chunk，清掉掉落物实体）。
     sec = [d for p, d in events if p == 0x21]
-    check(not sec, f"改方块后没有重发区块（收到 {len(sec)} 个 0x21）")
+    if check(len(sec) >= 1, f"收到段更新 x{len(sec)}"):
+        ground = sec[-1][8]
+        check(ground == 0, f"groundUp={ground}（只发段，不重发整块）")
 
     so = [d for p, d in events if p == 0x0E]
     if check(len(so) >= 1, "掉落物实体生成了 (0x0E)"):
