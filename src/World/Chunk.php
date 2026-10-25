@@ -103,7 +103,7 @@ final class Chunk
 
         $skyLightPart = '';
         foreach ($kept as $sec) {
-            $skyLightPart .= Nbt::bytes($sec, 'SkyLight') ?? str_repeat("\xff", 2048);
+            $skyLightPart .= $this->skyLightBytes($sec, Nbt::int($sec, 'Y'));
         }
 
         $biomes = Nbt::bytes($this->level(), 'Biomes');
@@ -127,7 +127,97 @@ final class Chunk
 
         return $this->blocksBytes($sec)
             . (Nbt::bytes($sec, 'BlockLight') ?? str_repeat("\x00", 2048))
-            . (Nbt::bytes($sec, 'SkyLight') ?? str_repeat("\xff", 2048));
+            . $this->skyLightBytes($sec, $sy);
+    }
+
+    /**
+     * 发出去的天空光：**只抬高、不压低**。
+     *
+     * 存档里有些格子的光是旧的（单机保存时就没算对），原样发过去客户端就画成纯黑；
+     * 反过来，如果拿我们算的粗糙光照去覆盖客户端的，又会把人家算好的地方压暗
+     * ——「越挖越黑」就是这么来的。
+     *
+     * 所以：地表以上一律给 15（按高度图），地下的保留 NBT 原值。
+     */
+    private function skyLightBytes(Tag $sec, int $sy): string
+    {
+        $arr = Nbt::bytes($sec, 'SkyLight');
+        if ($arr === null || strlen($arr) !== 2048) {
+            $arr = str_repeat("\x00", 2048);
+        }
+
+        $get = static function (string $s, int $i): int {
+            $b = ord($s[$i >> 1]);
+
+            return ($i & 1) ? ($b & 0x0F) : ($b >> 4);
+        };
+        $put = static function (string &$s, int $i, int $v): void {
+            $bi = $i >> 1;
+            $b = ord($s[$bi]);
+            $s[$bi] = chr(($i & 1) ? (($b & 0xF0) | $v) : (($b & 0x0F) | ($v << 4)));
+        };
+
+        // 1) 地表以上直接 15
+        for ($z = 0; $z < 16; $z++) {
+            for ($x = 0; $x < 16; $x++) {
+                $h = $this->heightAt($x, $z);
+                for ($ly = 0; $ly < 16; $ly++) {
+                    if ($sy * 16 + $ly < $h) {
+                        continue;
+                    }
+                    $put($arr, ($ly << 8) | ($z << 4) | $x, 15);
+                }
+            }
+        }
+
+        // 2) 段内扩散：亮度逐格 -1。原版是整块 BFS，这里只在 16³ 里做，
+        //    够把洞口侧壁、屋檐底下照亮，也不会跨段把事搞乱。
+        $queue = [];
+        for ($i = 0; $i < 4096; $i++) {
+            if ($get($arr, $i) === 15) {
+                $queue[] = $i;
+            }
+        }
+        $head = 0;
+        $count = count($queue);
+        while ($head < $count) {
+            $i = $queue[$head++];
+            $l = $get($arr, $i);
+            if ($l <= 1) {
+                continue;
+            }
+            $ly = ($i >> 8) & 0x0F;
+            $z = ($i >> 4) & 0x0F;
+            $x = $i & 0x0F;
+            $nei = [];
+            if ($x > 0) {
+                $nei[] = $i - 1;
+            }
+            if ($x < 15) {
+                $nei[] = $i + 1;
+            }
+            if ($z > 0) {
+                $nei[] = $i - 16;
+            }
+            if ($z < 15) {
+                $nei[] = $i + 16;
+            }
+            if ($ly > 0) {
+                $nei[] = $i - 256;
+            }
+            if ($ly < 15) {
+                $nei[] = $i + 256;
+            }
+            foreach ($nei as $n) {
+                if ($get($arr, $n) < $l - 1) {
+                    $put($arr, $n, $l - 1);
+                    $queue[] = $n;
+                    $count++;
+                }
+            }
+        }
+
+        return $arr;
     }
 
     /** 一段的方块数据：4096 个小端 ushort，(id << 4) | meta */

@@ -763,13 +763,9 @@ final class Server
      */
     private function markSection(int $x, int $y, int $z): void
     {
-        // 只补发「这一段」，不重发整块。
-        // 整块（groundUp=true）会让客户端重载 chunk，把刚生成的掉落物实体清掉，
-        // 所以只用 groundUp=false 的段更新，专门用来把新光照送过去。
-        $cx = $x >> 4;
-        $cz = $z >> 4;
-        $sy = $y >> 4;
-        $this->dirtySections[$cx . ',' . $cz . ',' . $sy] = [$cx, $cz, $sy];
+        // 什么都不做。发段更新会把我们这份「存档里的旧光照」盖到客户端上，
+        // 客户端本来算对的地方反而被压暗 —— 玩家反馈「挖完反而变黑」就是它。
+        // 光照要真修，得在服务端跑正儿八经的光照传播（见 README 的待办）。
     }
 
     /**
@@ -1478,7 +1474,6 @@ final class Server
         }
 
         $this->processDrops();
-        $this->flushSections();
 
         foreach ($this->players() as $p) {
             if ($p->chunkQueue !== []) {
