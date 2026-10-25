@@ -372,13 +372,60 @@ final class AnvilWorld
     ): void {
         $key = strtolower($name);
         $pos = $this->playerPositions();
-        $pos[$key] = [
+        // 合并而不是覆盖：同一个文件里还存着背包（inv）
+        $pos[$key] = array_merge($pos[$key] ?? [], [
             'x' => round($x, 3),
             'y' => round($y, 3),
             'z' => round($z, 3),
             'yaw' => round($yaw, 1),
             'pitch' => round($pitch, 1),
-        ];
+        ]);
+        $this->playerPos = $pos;
+        @file_put_contents(
+            $this->posFile(),
+            json_encode($pos, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT),
+            LOCK_EX
+        );
+    }
+
+    /**
+     * 背包。存在同一个 players 文件里（inv 字段）。
+     * 槽位用玩家背包编号：9-35 主区、36-44 快捷栏。
+     *
+     * @return array<int, array{id:int,count:int,damage:int}>
+     */
+    public function inventory(string $name): array
+    {
+        $inv = $this->playerPositions()[strtolower($name)]['inv'] ?? [];
+        if (!is_array($inv)) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($inv as $slot => $item) {
+            if (!is_array($item) || !isset($item['id'])) {
+                continue;
+            }
+            $s = (int) $slot;
+            if ($s < 0 || $s > 44) {
+                continue;
+            }
+            $out[$s] = [
+                'id' => (int) $item['id'],
+                'count' => (int) ($item['count'] ?? 1),
+                'damage' => (int) ($item['damage'] ?? 0),
+            ];
+        }
+
+        return $out;
+    }
+
+    /** @param array<int, array{id:int,count:int,damage:int}> $inv */
+    public function rememberInventory(string $name, array $inv): void
+    {
+        $key = strtolower($name);
+        $pos = $this->playerPositions();
+        $pos[$key] = array_merge($pos[$key] ?? [], ['inv' => $inv]);
         $this->playerPos = $pos;
         @file_put_contents(
             $this->posFile(),
