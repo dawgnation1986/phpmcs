@@ -88,6 +88,8 @@ final class Connection
 
 final class Server
 {
+    use ChestTrait;
+
     public const PROTOCOL = 47;
     public const VERSION = '1.8.9';
 
@@ -111,6 +113,9 @@ final class Server
     private const C_ENTITY_VELOCITY = 0x12;
     private const C_ENTITY_METADATA = 0x1C;
     private const C_UPDATE_HEALTH = 0x06;
+    private const C_OPEN_WINDOW = 0x2D;
+    private const C_WINDOW_ITEMS = 0x30;
+    private const C_CONFIRM_TRANSACTION = 0x32;
     private const C_BLOCK_CHANGE = 0x23;
     private const C_CHANGE_GAME_STATE = 0x2B;
     private const C_SET_SLOT = 0x2F;
@@ -138,6 +143,7 @@ final class Server
         private string $motd,
         private AnvilWorld $world,
         private Skins $skins,
+        private \PhpMc\World\ChestStore $chests,
         private int $maxPlayers = 20,
         private int $gamemode = 1,
         private int $viewDistance = 3,
@@ -620,15 +626,27 @@ final class Server
                 }
                 break;
 
-            case 0x08: // 放方块
+            case 0x08: // 放方块 / 使用方块
                 [$x, $y, $z] = $this->unpackPosition($r->readLong());
                 $face = $r->readUnsignedByte();
+
+                // 先看点到的是什么：箱子这类是「使用」，不是「放置」。
+                // 必须放在「手上是不是方块」判断之前 —— 空手右键箱子时
+                // itemId 是 -1，先判就永远走不到这里。
+                $hitId = $this->world->chunk($x >> 4, $z >> 4)
+                    ->blockState($x & 15, $y, $z & 15) >> 4;
+                if ($hitId === 54) {
+                    $this->openChest($c, $x, $y, $z);
+                    break;
+                }
+
                 $itemId = $r->readShort();
                 if ($itemId <= 0 || $itemId > 255) {
                     break; // 手上不是方块
                 }
                 $r->readByte();               // count
                 $damage = $r->readShort();     // 方块 meta 藏在 damage 里
+
                 [$tx, $ty, $tz] = self::offsetByFace($x, $y, $z, $face);
                 $this->log("  放 {$itemId} @ {$tx},{$ty},{$tz}（点的 {$x},{$y},{$z} 面 {$face}）");
                 $this->changeBlock($tx, $ty, $tz, $itemId, $damage & 0x0F);
@@ -670,14 +688,26 @@ final class Server
                 }
                 break;
 
-            case 0x0E: // Click Window：背包里按 Q 走这里（mode 4）
+            case 0x0E: // Click Window
+                // 1.8 顺序：windowId, slot, button, action(short), mode, 手上物品
                 $windowId = $r->readByte();
                 $slot = $r->readShort();
                 $button = $r->readByte();
+                $action = $r->readShort();
                 $mode = $r->readByte();
-                if ($mode === 4 && $windowId === 0) {
+                $cursor = $this->readSlotItem($r);
+                if ($windowId === 0 && $mode === 4) {
                     $this->dropFromSlot($c, $slot, $button === 1);
+                } elseif ($windowId === 1) {
+                    $this->clickChest($c, $slot, $button, $mode, $cursor);
                 }
+                $c->send(self::C_CONFIRM_TRANSACTION, (new Writer())
+                    ->byte($windowId)->short($action)->bool(true));
+                break;
+
+            case 0x0D: // Close Window
+                $r->readByte();
+                $this->closeChest($c);
                 break;
 
             case 0x13: // 客户端报能力（比如开始飞）
