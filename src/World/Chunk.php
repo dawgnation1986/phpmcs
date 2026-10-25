@@ -114,6 +114,22 @@ final class Chunk
         return $this->payload = [$mask, $data];
     }
 
+    /**
+     * 单独一段的负载：方块 + 方块光 + 天空光。
+     * 只有一段时，这个顺序和整块的分组布局是一样的。
+     */
+    public function sectionPayload(int $sy): ?string
+    {
+        $sec = $this->sectionFor($sy);
+        if ($sec === null) {
+            return null;
+        }
+
+        return $this->blocksBytes($sec)
+            . (Nbt::bytes($sec, 'BlockLight') ?? str_repeat("\x00", 2048))
+            . (Nbt::bytes($sec, 'SkyLight') ?? str_repeat("\xff", 2048));
+    }
+
     /** 一段的方块数据：4096 个小端 ushort，(id << 4) | meta */
     private function blocksBytes(Tag $sec): string
     {
