@@ -15,6 +15,8 @@ require __DIR__ . '/../src/Nbt/Tag.php';
 require __DIR__ . '/../src/Nbt/Nbt.php';
 require __DIR__ . '/../src/World/Chunk.php';
 require __DIR__ . '/../src/World/AnvilWorld.php';
+require __DIR__ . '/../src/World/ChestStore.php';
+require __DIR__ . '/../src/ChestTrait.php';
 require __DIR__ . '/../src/Skin/Skins.php';
 require __DIR__ . '/../src/Server.php';
 
@@ -46,7 +48,10 @@ if (is_file($skinConf)) {
 }
 
 $skins = new PhpMc\Skin\Skins(__DIR__ . '/../cache/skins.json', $allow);
+$chests = new PhpMc\World\ChestStore(
+    __DIR__ . '/../cache/chests-' . substr(md5($worldDir), 0, 8) . '.json'
+);
 $gamemode = $world->created ? 1 : $world->gameType();
 
-$server = new PhpMc\Server('0.0.0.0', $port, $motd, $world, $skins, 20, $gamemode, 3);
+$server = new PhpMc\Server('0.0.0.0', $port, $motd, $world, $skins, $chests, 20, $gamemode, 3);
 $server->run();

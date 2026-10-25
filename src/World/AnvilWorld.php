@@ -24,6 +24,8 @@ final class AnvilWorld
     /** @var array<string, resource|null> */
     private array $handles = [];
     public bool $created = false;
+    /** @var array<string, bool> 已经记过「读不到」的区块，别刷屏 */
+    private array $missingLogged = [];
 
     public function __construct(private string $dir)
     {
@@ -108,6 +110,22 @@ final class AnvilWorld
             return $this->chunks[$key] = new Chunk($cx, $cz, $root);
         }
 
+        // 读不到就生成平地。这一步必须留痕：玩家遇到过「跑着跑着地形全变超平坦」，
+        // 说明某个区块读失败了，然后这份生成的平地被缓存下来顶替了真地形。
+        if ($this->created === false && !isset($this->missingLogged[$cx . ',' . $cz])) {
+            $this->missingLogged[$cx . ',' . $cz] = true;
+            $rx = $cx >> 5;
+            $rz = $cz >> 5;
+            $path = $this->dir . DIRECTORY_SEPARATOR . 'region'
+                . DIRECTORY_SEPARATOR . "r.{$rx}.{$rz}.mca";
+            error_log(sprintf(
+                '[phpmcs] 区块 %d,%d 读不到，临时用平地顶替（%s %s）',
+                $cx,
+                $cz,
+                is_file($path) ? '存在' : '不存在',
+                $path
+            ));
+        }
         $chunk = new Chunk($cx, $cz, self::flatChunk($cx, $cz));
         // 我们自己造的世界：生成即落盘；别人的存档：只发不写，免得把平地糊进人家世界
         $chunk->dirty = $this->created;
