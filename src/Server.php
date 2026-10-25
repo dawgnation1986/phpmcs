@@ -1534,6 +1534,17 @@ final class Server
         $this->log("- 断开 {$c->remote}" . ($c->username !== '' ? " ({$c->username})" : '') . " ({$why})");
 
         if ($wasPlaying) {
+            // 客户端崩了/直接断线时不会发 Close Window，箱子内容得在这里补存，
+            // 不然刚放进去的东西就丢了。
+            if ($c->chest !== null) {
+                $this->chests->save(
+                    $c->chest['x'],
+                    $c->chest['y'],
+                    $c->chest['z'],
+                    $c->chest['slots']
+                );
+                $c->chest = null;
+            }
             $this->world->rememberPosition(
                 $c->username,
                 $c->x,
