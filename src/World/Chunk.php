@@ -98,7 +98,7 @@ final class Chunk
 
         $blockLightPart = '';
         foreach ($kept as $sec) {
-            $blockLightPart .= Nbt::bytes($sec, 'BlockLight') ?? str_repeat("\x00", 2048);
+            $blockLightPart .= $this->blockLightBytes($sec, Nbt::int($sec, 'Y'));
         }
 
         $skyLightPart = '';
@@ -126,8 +126,104 @@ final class Chunk
         }
 
         return $this->blocksBytes($sec)
-            . (Nbt::bytes($sec, 'BlockLight') ?? str_repeat("\x00", 2048))
+            . $this->blockLightBytes($sec, $sy)
             . $this->skyLightBytes($sec, $sy);
+    }
+
+    /** 会发光的方块：id => 亮度（1.8 的取值） */
+    private const EMITTERS = [
+        50 => 14,   // 火把
+        51 => 15,   // 火
+        62 => 13,   // 点着的熔炉
+        74 => 9,    // 点着的红石矿
+        89 => 15,   // 萤石
+        90 => 11,   // 下界传送门
+        94 => 7,    // 点着的红石中继器
+        117 => 1,   // 酿造台
+        119 => 15,  // 末地传送门
+        124 => 15,  // 点着的红石灯
+        138 => 15,  // 信标
+        169 => 15,  // 海晶灯
+    ];
+
+    /**
+     * 发出去的方块光：存档里的旧值当底，再按发光方块在段内扩散一遍。
+     * 火把、萤石这些才亮得起来；同样只抬高不压低。
+     */
+    private function blockLightBytes(Tag $sec, int $sy): string
+    {
+        $arr = Nbt::bytes($sec, 'BlockLight');
+        if ($arr === null || strlen($arr) !== 2048) {
+            $arr = str_repeat("\x00", 2048);
+        }
+
+        $blocks = Nbt::bytes($sec, 'Blocks');
+        if ($blocks === null || strlen($blocks) !== 4096) {
+            return $arr;
+        }
+
+        $get = static function (string $s, int $i): int {
+            $b = ord($s[$i >> 1]);
+
+            return ($i & 1) ? ($b & 0x0F) : ($b >> 4);
+        };
+        $put = static function (string &$s, int $i, int $v): void {
+            $bi = $i >> 1;
+            $b = ord($s[$bi]);
+            $s[$bi] = chr(($i & 1) ? (($b & 0xF0) | $v) : (($b & 0x0F) | ($v << 4)));
+        };
+
+        $queue = [];
+        for ($i = 0; $i < 4096; $i++) {
+            $emit = self::EMITTERS[ord($blocks[$i])] ?? 0;
+            if ($emit > 0 && $get($arr, $i) < $emit) {
+                $put($arr, $i, $emit);
+            }
+            if ($get($arr, $i) > 1) {
+                $queue[] = $i;
+            }
+        }
+
+        $head = 0;
+        $count = count($queue);
+        while ($head < $count) {
+            $i = $queue[$head++];
+            $l = $get($arr, $i);
+            if ($l <= 1) {
+                continue;
+            }
+            $ly = ($i >> 8) & 0x0F;
+            $z = ($i >> 4) & 0x0F;
+            $x = $i & 0x0F;
+            $nei = [];
+            if ($x > 0) {
+                $nei[] = $i - 1;
+            }
+            if ($x < 15) {
+                $nei[] = $i + 1;
+            }
+            if ($z > 0) {
+                $nei[] = $i - 16;
+            }
+            if ($z < 15) {
+                $nei[] = $i + 16;
+            }
+            if ($ly > 0) {
+                $nei[] = $i - 256;
+            }
+            if ($ly < 15) {
+                $nei[] = $i + 256;
+            }
+            foreach ($nei as $n) {
+                if ($get($arr, $n) < $l - 1) {
+                    $put($arr, $n, $l - 1);
+                    $queue[] = $n;
+                    $count++;
+                }
+            }
+        }
+
+        return $arr;
     }
 
     /**
