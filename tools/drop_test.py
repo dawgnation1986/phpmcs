@@ -129,7 +129,8 @@ def main():
         slot = struct.unpack(">h", ss[-1][1:3])[0]
         item_id, count, damage = struct.unpack(">hbh", ss[-1][3:8])
         check(36 <= slot <= 44, f"落在快捷栏槽位 {slot}")
-        check(item_id == 4 and count == 1, f"物品 id={item_id} 数量={count}")
+        # 背包现在会跨会话保存，所以不能断言绝对数量（会叠在上次留下的那堆上）
+        check(item_id == 4 and count >= 1, f"物品 id={item_id} 数量={count}（>=1 即可）")
 
     c.sock.close()
     print()
