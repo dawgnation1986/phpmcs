@@ -377,6 +377,10 @@ final class Server
         $c->health = 20.0;
         $this->sendHealth($c);
 
+        // 背包：不发这个，重连之后东西就「没了」（客户端从空背包开始）
+        $c->inventory = $this->world->inventory($c->username);
+        $this->sendPlayerInventory($c);
+
         // 4) 标签列表 / 互相看见
         foreach ($this->players() as $other) {
             $this->sendTabAdd($c, $other);
@@ -1401,6 +1405,16 @@ final class Server
             ->float(5.0));
     }
 
+    /** 把 45 格背包推给客户端（windowId 0 = 玩家自己的背包） */
+    private function sendPlayerInventory(Connection $c): void
+    {
+        $w = (new Writer())->byte(0)->short(45);
+        for ($i = 0; $i < 45; $i++) {
+            $w->raw($this->slotBytes($c->inventory[$i] ?? null));
+        }
+        $c->send(self::C_WINDOW_ITEMS, $w);
+    }
+
     /** 掉血；掉到 0 就回出生点（不做死亡界面，先把机制跑通）。 */
     private function damage(Connection $c, int $dmg): void
     {
@@ -1545,6 +1559,7 @@ final class Server
                 );
                 $c->chest = null;
             }
+            $this->world->rememberInventory($c->username, $c->inventory);
             $this->world->rememberPosition(
                 $c->username,
                 $c->x,
