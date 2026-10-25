@@ -754,11 +754,11 @@ final class Server
      */
     private function markSection(int $x, int $y, int $z): void
     {
-        // 记整个区块，不再记某一段 —— 分段更新（groundUp=false）客户端不认，
-        // 只有整块重发才会刷新。玩家实测：走进去的新区块正常，改过的老区块不刷新。
-        $cx = $x >> 4;
-        $cz = $z >> 4;
-        $this->dirtySections[$cx . ',' . $cz] = [$cx, $cz];
+        // 故意什么都不做。
+        // 原版改方块只发 Block Change，从不重发区块数据。
+        // 之前这里改方块后整块重发（groundUp=true），客户端会重新加载那个 chunk，
+        // 顺手把刚生成掉落物实体清掉 —— 表现就是「东西能捡但不显示」。
+        // 分段更新（groundUp=false）也不能发，会把客户端的 chunk 读串。
     }
 
     /** 每拍最多重发两个区块，别把带宽打爆；同一个区块 0.15 秒内不重复发。 */
@@ -1414,7 +1414,6 @@ final class Server
         }
 
         $this->processDrops();
-        $this->flushSections();
 
         foreach ($this->players() as $p) {
             if ($p->chunkQueue !== []) {
