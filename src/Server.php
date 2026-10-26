@@ -1386,8 +1386,7 @@ final class Server
             ->int((int) ($d['y'] * 32))
             ->int((int) ($d['z'] * 32))
             ->byte(0)->byte(0)
-            ->int(1)
-            ->short(0)->short(0)->short(0));
+            ->int(0));
         $p->send(self::C_ENTITY_METADATA, (new Writer())
             ->varInt($eid)
             ->byte((5 << 5) | 10)
@@ -1427,8 +1426,10 @@ final class Server
                 ->int((int) ($py * 32))
                 ->int((int) ($pz * 32))
                 ->byte(0)->byte(0)
-                ->int(1)
-                ->short($vx)->short($vy)->short($vz));
+                // data=0：不带速度。1.8 的客户端只有在 data>0 时才读那 3 个
+                // short；我们给 1 的时候它读，但读到的速度可能让它一生成就被
+                // 判定到别处。先用最保守的写法。
+                ->int(0));
             $p->send(self::C_ENTITY_METADATA, (new Writer())
                 ->varInt($eid)
                 ->byte((5 << 5) | 10)
