@@ -34,6 +34,8 @@ final class Connection
     public ?array $chest = null;
     /** 进服 1 秒后补发一次背包：有的客户端会忽略第一次 Window Items */
     public float $resendInvAt = 0.0;
+    /** 创造模式第一次挖方块时提示一次「不掉落」，别每次都刷 */
+    public bool $hintedCreativeDrop = false;
     public int $gamemode = 1;
     public bool $flying = false;
     /** 手上拿的是快捷栏第几格（0-8），客户端切物品时会告诉我们 */
@@ -820,6 +822,14 @@ final class Server
 
         // 创造模式不掉落（原版行为）
         if ($c->gamemode === 1) {
+            if (! $c->hintedCreativeDrop) {
+                $c->hintedCreativeDrop = true;
+                $this->sendChat($c, [
+                    'text' => '创造模式不掉落（原版行为）。想测掉落用 /gm 0 切生存。',
+                    'color' => 'gray',
+                ], 1);
+            }
+
             return;
         }
 
