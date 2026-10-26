@@ -1375,6 +1375,10 @@ final class Server
     /** 给某一个玩家补发一条掉落实体（进服时用，速度给 0）。 */
     private function sendDropSpawn(Connection $p, int $eid, array $d): void
     {
+        if (($d['id'] ?? 0) <= 0 || ($d['count'] ?? 0) <= 0) {
+            return;
+        }
+
         $p->send(self::C_SPAWN_OBJECT, (new Writer())
             ->varInt($eid)
             ->byte(2)
@@ -1404,6 +1408,13 @@ final class Server
         int $vz,
         float $delay = 2.0
     ): void {
+        // 兜底：id 非法或数量为 0 的物品实体，客户端拿到会渲染空栈 → NPE 崩溃
+        // （报错是「实体 null 导致崩溃」）。宁可不生成，也不能让客户端炸。
+        if ($id <= 0 || $id > 450 || $count <= 0) {
+            return;
+        }
+        $count = min(64, $count);
+
         $eid = $this->nextEntityId++;
 
         foreach ($this->players() as $p) {
