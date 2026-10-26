@@ -40,6 +40,8 @@ final class Connection
     public float $lastRegen = 0.0;
     /** 疲劳值：攒够 4.0 掉 1 点饱食度 */
     public float $exhaustion = 0.0;
+    /** 下一次能吃的时间：一口 1.6 秒（原版进食时长） */
+    public float $nextEatAt = 0.0;
     /** 上一次的位置，用来算跑动距离 */
     public float $lastX = 0.0;
     public float $lastY = 0.0;
@@ -1690,6 +1692,14 @@ final class Server
         if ($c->food >= 20) {
             return;
         }
+
+        // 一口 1.6 秒。没有这个，客户端一直发「使用物品」就会连吃，
+        // 看起来就像「饱食度自动回满」。
+        $now = microtime(true);
+        if ($now < $c->nextEatAt) {
+            return;
+        }
+        $c->nextEatAt = $now + 1.6;
 
         $slot = 36 + $c->heldSlot;
         $it = $c->inventory[$slot] ?? null;
