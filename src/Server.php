@@ -385,6 +385,18 @@ final class Server
         $c->inventory = $this->world->inventory($c->username);
         $this->sendPlayerInventory($c);
         $c->resendInvAt = microtime(true) + 1.0;
+
+        // 地上已有的掉落物要重新 Spawn 给这个连接。
+        // 不补的话：客户端根本没有这些实体，东西「看不见但捡得到」——
+        // 因为拾取是服务端按距离算的，不依赖客户端画没画出来。
+        $resent = 0;
+        foreach ($this->drops as $eid => $d) {
+            $this->sendDropSpawn($c, $eid, $d);
+            $resent++;
+        }
+        if ($resent > 0) {
+            $this->log("  补发地上掉落物 {$resent} 个");
+        }
         $this->log("  载入背包 " . count($c->inventory) . ' 格');
 
         // 4) 标签列表 / 互相看见
@@ -812,7 +824,7 @@ final class Server
         }
 
         [$dropId, $count] = self::dropOf($id, $meta);
-        if ($dropId > 0) {
+        if ($dropId > 0 && $count > 0) {
             $this->spawnDrop($x, $y, $z, $dropId, $count, $dropId === $id ? $meta : 0, $c);
         }
     }
@@ -968,6 +980,10 @@ final class Server
             $id === 82 => [337, 4],                 // 黏土 -> 4 个黏土球
             $id === 89 => [89, 1],                  // 萤石
             $id === 103 => [360, 1],                // 西瓜 -> 西瓜片
+            // 高草：12.5% 掉 1 个小麦种子
+            $id === 31 => mt_rand(1, 8) === 1 ? [295, 1] : [0, 0],
+            // 枯木：0~2 根木棍
+            $id === 32 => [280, random_int(0, 2)],
             $id === 7 => [0, 0],                    // 基岩（本来就挖不动，兜底）
             default => [$id, 1],
         };
@@ -1172,6 +1188,25 @@ final class Server
 
         $this->throwItem($px, $py, $pz, $it['id'], $n, $it['damage'],
             (int) ($dx * 2400), (int) ($dy * 2400 + 600), (int) ($dz * 2400));
+    }
+
+    /** 给某一个玩家补发一条掉落实体（进服时用，速度给 0）。 */
+    private function sendDropSpawn(Connection $p, int $eid, array $d): void
+    {
+        $p->send(self::C_SPAWN_OBJECT, (new Writer())
+            ->varInt($eid)
+            ->byte(2)
+            ->int((int) ($d['x'] * 32))
+            ->int((int) ($d['y'] * 32))
+            ->int((int) ($d['z'] * 32))
+            ->byte(0)->byte(0)
+            ->int(1)
+            ->short(0)->short(0)->short(0));
+        $p->send(self::C_ENTITY_METADATA, (new Writer())
+            ->varInt($eid)
+            ->byte((5 << 5) | 10)
+            ->short($d['id'])->byte($d['count'])->short($d['meta'])->byte(0)
+            ->unsignedByte(0x7F));
     }
 
     /** 在指定位置放一个物品实体，速度和坐标都由调用方给。 */
