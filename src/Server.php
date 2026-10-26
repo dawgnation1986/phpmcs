@@ -40,6 +40,10 @@ final class Connection
     public float $lastRegen = 0.0;
     /** 疲劳值：攒够 4.0 掉 1 点饱食度 */
     public float $exhaustion = 0.0;
+    /** 上一次的位置，用来算跑动距离 */
+    public float $lastX = 0.0;
+    public float $lastY = 0.0;
+    public float $lastZ = 0.0;
     public int $gamemode = 1;
     public bool $flying = false;
     /** 手上拿的是快捷栏第几格（0-8），客户端切物品时会告诉我们 */
@@ -387,6 +391,12 @@ final class Server
         // 血量（不发病客户端默认满血，但要让它知道是服务端在管）
         $c->health = 20.0;
         $this->sendHealth($c);
+
+        // 上一次位置要先设成出生点，否则第一段移动会被算成「从 0,0,0 跑过来」，
+        // 一口气掉好几格饱食度。
+        $c->lastX = $c->x;
+        $c->lastY = $c->y;
+        $c->lastZ = $c->z;
 
         // 背包：不发这个，重连之后东西就「没了」（客户端从空背包开始）
         $c->inventory = $this->world->inventory($c->username);
@@ -870,14 +880,7 @@ final class Server
             }
         }
 
-        // 消耗：每挖一块攒 0.005 疲劳，攒够 4.0 掉 1 点饱食度（原版数值）
-        $c->exhaustion += 0.005;
-        while ($c->exhaustion >= 4.0 && $c->food > 0) {
-            $c->exhaustion -= 4.0;
-            $c->food--;
-            $c->send(self::C_UPDATE_HEALTH, (new Writer())
-                ->float($c->health)->varInt($c->food)->float(0.0));
-        }
+        $this->addExhaustion($c, 0.005);   // 挖一块 0.005（原版数值）
 
         if (!$chunk->setBlock($x & 15, $y, $z & 15, 0, 0)) {
             return;
@@ -985,6 +988,22 @@ final class Server
         if ($yaw !== null) {
             $c->yaw = $yaw;
             $c->pitch = (float) $pitch;
+        }
+
+        // 跑动和跳跃的饱食度消耗（原版：跑 0.1/格，跳 0.05，冲刺跳 0.2）
+        if ($moved) {
+            $dist = sqrt(
+                ($c->x - $c->lastX) ** 2 + ($c->z - $c->lastZ) ** 2
+            );
+            if ($dist > 0.02) {
+                $this->addExhaustion($c, $dist * 0.1);
+            }
+            if ($onGround === false && $c->y > $c->lastY + 0.15) {
+                $this->addExhaustion($c, 0.05);
+            }
+            $c->lastX = $c->x;
+            $c->lastY = $c->y;
+            $c->lastZ = $c->z;
         }
 
         // 掉落伤害：离地时记住高度，落地时按 (高度差 - 3) 算。
@@ -1669,6 +1688,22 @@ final class Server
         $c->send(self::C_UPDATE_HEALTH, (new Writer())
             ->float($c->health)->varInt($c->food)->float(5.0));
         $this->log("  {$c->username} 吃了方块{$itemId}，饱食度 {$c->food}，血 {$c->health}");
+    }
+
+    /** 加疲劳，攒够 4.0 掉 1 点饱食度并推血量包。 */
+    private function addExhaustion(Connection $c, float $amount): void
+    {
+        if ($c->gamemode === 1) {
+            return;
+        }
+        $c->exhaustion += $amount;
+        while ($c->exhaustion >= 4.0 && $c->food > 0) {
+            $c->exhaustion -= 4.0;
+            $c->food--;
+            $c->send(self::C_UPDATE_HEALTH, (new Writer())
+                ->float($c->health)->varInt($c->food)->float(0.0));
+            $this->log("  {$c->username} 饱食度降到 {$c->food}");
+        }
     }
 
     private function sendHealth(Connection $c): void
