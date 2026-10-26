@@ -1625,6 +1625,11 @@ final class Server
             return;
         }
 
+        // 饱食度满了就不能吃（原版行为）：不扣物品、不放动画
+        if ($c->food >= 20) {
+            return;
+        }
+
         $slot = 36 + $c->heldSlot;
         $it = $c->inventory[$slot] ?? null;
         if ($it === null || $it['id'] !== $itemId) {
