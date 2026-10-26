@@ -1417,7 +1417,9 @@ final class Server
 
         $eid = $this->nextEntityId++;
 
+        $n = 0;
         foreach ($this->players() as $p) {
+            $n++;
             $p->send(self::C_SPAWN_OBJECT, (new Writer())
                 ->varInt($eid)
                 ->byte(2)
@@ -1449,7 +1451,7 @@ final class Server
             'at' => $now + $delay,
             'expire' => $now + 30,
         ];
-        $this->log("  丢出 {$count}x 方块{$id} @ " . round($px, 1) . ',' . round($py, 1) . ',' . round($pz, 1));
+        $this->log("  丢出 {$count}x 方块{$id} eid={$eid} @ " . round($px, 1) . ',' . round($py, 1) . ',' . round($pz, 1) . " 发给了 {$n} 人");
     }
 
     private function solidAt(float $x, float $y, float $z): bool
