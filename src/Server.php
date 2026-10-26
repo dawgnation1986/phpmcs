@@ -1605,6 +1605,25 @@ final class Server
                 $this->log("手动 reload：存盘 {$saved}，清缓存 {$n}");
                 break;
 
+            case 'hit':
+                [$hx, $hy, $hz, $hid, $hmeta] = $this->raycast($c, 5.0);
+                $this->sendChat($c, $hid === 0
+                    ? ['text' => '视线 5 格内没有方块', 'color' => 'gray']
+                    : [
+                        'text' => sprintf(
+                            '你正对着 (%d,%d,%d)：方块 id=%d meta=%d %s',
+                            $hx,
+                            $hy,
+                            $hz,
+                            $hid,
+                            $hmeta,
+                            $hmeta !== 0 ? '' : ''
+                        ),
+                        'color' => 'yellow',
+                    ], 1);
+                $this->log("  {$c->username} /hit -> {$hx},{$hy},{$hz} id={$hid} meta={$hmeta}");
+                break;
+
             case 'inv':
                 $list = [];
                 foreach ($c->inventory as $slot => $item) {
@@ -1704,6 +1723,40 @@ final class Server
                 ->float($c->health)->varInt($c->food)->float(0.0));
             $this->log("  {$c->username} 饱食度降到 {$c->food}");
         }
+    }
+
+    /**
+     * 从玩家的眼睛沿着视线走，最多 reach 格，返回第一个非空气方块。
+     * 用来回答「你正对着的到底是什么」——不靠截图猜。
+     *
+     * @return array{0:int,1:int,2:int,3:int,4:int} [x, y, z, id, meta]
+     */
+    private function raycast(Connection $c, float $reach): array
+    {
+        $yaw = deg2rad($c->yaw);
+        $pitch = deg2rad($c->pitch);
+        $ex = $c->x;
+        $ey = $c->y + 1.62;          // 眼睛高度
+        $ez = $c->z;
+        $dx = -sin($yaw) * cos($pitch);
+        $dy = -sin($pitch);
+        $dz = cos($yaw) * cos($pitch);
+
+        for ($s = 0.0; $s <= $reach; $s += 0.05) {
+            $bx = (int) floor($ex + $dx * $s);
+            $by = (int) floor($ey + $dy * $s);
+            $bz = (int) floor($ez + $dz * $s);
+            if ($by < 0 || $by > 255) {
+                continue;
+            }
+            $state = $this->world->chunk($bx >> 4, $bz >> 4)
+                ->blockState($bx & 15, $by, $bz & 15);
+            if ($state !== 0) {
+                return [$bx, $by, $bz, $state >> 4, $state & 15];
+            }
+        }
+
+        return [0, 0, 0, 0, 0];
     }
 
     private function sendHealth(Connection $c): void
