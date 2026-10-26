@@ -635,8 +635,12 @@ final class Server
                     ? $this->world->chunk($x >> 4, $z >> 4)->blockState($x & 15, $y, $z & 15)
                     : -1;
                 $this->log("  挖 status={$status} @ {$x},{$y},{$z} 服务端方块={$state} 模式={$c->gamemode}");
-                // 创造点一下就碎（status 0）；生存等客户端挖完（status 2）
-                if (($c->gamemode === 1 && $status === 0) || ($c->gamemode !== 1 && $status === 2)) {
+                // 创造点一下就碎；生存里硬度 0 的方块（花、枯木、甘蔗、高草…）
+                // 也是一碰就碎，不等 status=2。
+                $instant = $status === 0
+                    && in_array($state >> 4, self::INSTANT_BREAK, true);
+                if (($c->gamemode === 1 && $status === 0)
+                    || ($c->gamemode !== 1 && ($status === 2 || $instant))) {
                     if ($state === 0) {
                         // 客户端以为这里有方块，服务端这边是空气。
                         // 直接把这个「空气」打回去，客户端收到就会把幽灵方块擦掉，
@@ -974,6 +978,32 @@ final class Server
     // ---------------- 掉落物 ----------------
 
     /** 打碎方块掉什么（1.8 掉落表里常用的那些） */
+    /**
+     * 硬度 0 的方块：一碰就碎。
+     * 原版客户端对这类方块是「按下即完成」，有时只发 status=0 不发 2，
+     * 所以服务端不能死等 status=2 —— 收到 0 就直接碎。
+     */
+    private const INSTANT_BREAK = [
+        6,   // 树苗
+        31,  // 高草
+        32,  // 枯木
+        37,  // 蒲公英
+        38,  // 玫瑰
+        39,  // 棕蘑菇
+        40,  // 红蘑菇
+        50,  // 火把
+        51,  // 火
+        59,  // 作物
+        78,  // 雪层
+        83,  // 甘蔗
+        106, // 藤蔓
+        111, // 睡莲
+        115, // 地狱疣
+        141, // 胡萝卜
+        142, // 马铃薯
+        175, // 双生花
+    ];
+
     private static function dropOf(int $id, int $meta): array
     {
         return match (true) {
