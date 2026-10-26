@@ -165,12 +165,14 @@ final class Chunk
         $get = static function (string $s, int $i): int {
             $b = ord($s[$i >> 1]);
 
-            return ($i & 1) ? ($b & 0x0F) : ($b >> 4);
+            return ($i & 1) ? ($b >> 4) : ($b & 0x0F);
         };
         $put = static function (string &$s, int $i, int $v): void {
             $bi = $i >> 1;
             $b = ord($s[$bi]);
-            $s[$bi] = chr(($i & 1) ? (($b & 0xF0) | $v) : (($b & 0x0F) | ($v << 4)));
+            $s[$bi] = chr(($i & 1)
+                ? (($b & 0x0F) | (($v & 0x0F) << 4))
+                : (($b & 0xF0) | ($v & 0x0F)));
         };
 
         $queue = [];
@@ -245,12 +247,14 @@ final class Chunk
         $get = static function (string $s, int $i): int {
             $b = ord($s[$i >> 1]);
 
-            return ($i & 1) ? ($b & 0x0F) : ($b >> 4);
+            return ($i & 1) ? ($b >> 4) : ($b & 0x0F);
         };
         $put = static function (string &$s, int $i, int $v): void {
             $bi = $i >> 1;
             $b = ord($s[$bi]);
-            $s[$bi] = chr(($i & 1) ? (($b & 0xF0) | $v) : (($b & 0x0F) | ($v << 4)));
+            $s[$bi] = chr(($i & 1)
+                ? (($b & 0x0F) | (($v & 0x0F) << 4))
+                : (($b & 0xF0) | ($v & 0x0F)));
         };
 
         // 1) 地表以上直接 15
@@ -342,10 +346,49 @@ final class Chunk
     {
         $b = ord($s[$i >> 1]);
 
-        return ($i & 1) ? ($b & 0x0F) : ($b >> 4);
+        // 原版 NibbleArray：偶数索引在低 4 位，奇数索引在高 4 位
+        return ($i & 1) ? ($b >> 4) : ($b & 0x0F);
     }
 
     // ---------------- 改方块 ----------------
+
+    /**
+     * 找出区块里所有指定方块 id 的世界坐标。
+     * 直接在 Blocks 字节数组里扫，不逐格调 blockState —— 区块有 65536 格，
+     * 每个玩家发一次区块都逐格查会太慢。
+     *
+     * @return array<int, array{0:int,1:int,2:int}>
+     */
+    public function blockPositions(int $id): array
+    {
+        $needle = chr($id & 0xFF);
+        $out = [];
+        foreach ($this->sections() as $sec) {
+            $sy = Nbt::int($sec, 'Y');
+            if ($sy < 0 || $sy > 15) {
+                continue;
+            }
+            $blocks = Nbt::bytes($sec, 'Blocks');
+            if ($blocks === null || strlen($blocks) !== 4096) {
+                continue;
+            }
+            $add = Nbt::bytes($sec, 'Add');
+            $offset = 0;
+            while (($i = strpos($blocks, $needle, $offset)) !== false) {
+                $offset = $i + 1;
+                if ($add !== null && self::nibble($add, $i) !== 0) {
+                    continue;
+                }
+                $out[] = [
+                    $this->cx * 16 + ($i & 15),
+                    $sy * 16 + (($i >> 8) & 15),
+                    $this->cz * 16 + (($i >> 4) & 15),
+                ];
+            }
+        }
+
+        return $out;
+    }
 
     /** 返回 (blockId << 4) | meta */
     public function blockState(int $x, int $y, int $z): int
@@ -403,8 +446,8 @@ final class Chunk
         $bi = $i >> 1;
         $b = ord($data[$bi]);
         $b = ($i & 1)
-            ? (($b & 0xF0) | ($meta & 0x0F))
-            : (($b & 0x0F) | (($meta & 0x0F) << 4));
+            ? (($b & 0x0F) | (($meta & 0x0F) << 4))
+            : (($b & 0xF0) | ($meta & 0x0F));
         $sec->value['Data'] = Tag::byteArray(substr_replace($data, chr($b), $bi, 1));
 
         // 高度要跟着变，不然天空光照旧算错。
@@ -524,8 +567,8 @@ final class Chunk
         $bi = $i >> 1;
         $b = ord($arr[$bi]);
         $b = ($i & 1)
-            ? (($b & 0xF0) | ($v & 0x0F))
-            : (($b & 0x0F) | (($v & 0x0F) << 4));
+            ? (($b & 0x0F) | (($v & 0x0F) << 4))
+            : (($b & 0xF0) | ($v & 0x0F));
         $sec->value['SkyLight'] = Tag::byteArray(substr_replace($arr, chr($b), $bi, 1));
     }
 

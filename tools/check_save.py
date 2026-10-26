@@ -169,7 +169,7 @@ def main():
         if sec and y % 16 < 4096:
             i = (y % 16) * 256
             bid = sec["Blocks"][i] if i < len(sec["Blocks"]) else None
-            meta = (sec["Data"][i // 2] >> 4) if i // 2 < len(sec["Data"]) else 0
+            meta = (sec["Data"][i // 2] & 0x0F) if i // 2 < len(sec["Data"]) else 0
             state = None if bid is None else (bid << 4) | meta
         else:
             state = 0

@@ -14,9 +14,11 @@ require __DIR__ . '/../src/Protocol.php';
 require __DIR__ . '/../src/Nbt/Tag.php';
 require __DIR__ . '/../src/Nbt/Nbt.php';
 require __DIR__ . '/../src/World/Chunk.php';
+require __DIR__ . '/../src/World/TerrainGenerator.php';
 require __DIR__ . '/../src/World/AnvilWorld.php';
 require __DIR__ . '/../src/World/ChestStore.php';
 require __DIR__ . '/../src/ChestTrait.php';
+require __DIR__ . '/../src/CraftingTrait.php';
 require __DIR__ . '/../src/Skin/Skins.php';
 require __DIR__ . '/../src/Server.php';
 

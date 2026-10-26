@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace PhpMc;
 
+use PhpMc\Nbt\Nbt;
+use PhpMc\Nbt\Tag;
 use PhpMc\Skin\Skins;
 use PhpMc\World\AnvilWorld;
 
@@ -30,8 +32,22 @@ final class Connection
     public string $uuid = '';
     /** @var array{value:string,signature:string}|null */
     public ?array $textures = null;
-    /** @var array{x:int,y:int,z:int,slots:array}|null 打开着的箱子 */
+    /** @var array{x:int,y:int,z:int,size:int,partner:?array{0:int,1:int,2:int},slots:array}|null 打开着的箱子 */
     public ?array $chest = null;
+    /** @var array{id:int,count:int,damage:int}|null 服务端记录的光标物品 */
+    public ?array $cursor = null;
+    /** @var array<int,array{id:int,count:int,damage:int}|null> 玩家 2x2 合成格 */
+    public array $craftGrid = [null, null, null, null];
+    /** @var array<int,array{id:int,count:int,damage:int}|null> 工作台 3x3 合成格 */
+    public array $craft9 = [null, null, null, null, null, null, null, null, null];
+    /** 是否打开了工作台窗口（windowId 2） */
+    public bool $workbench = false;
+    /** 拖动（mode 5）阶段：0 未开始，1 收集槽位，2 结束分发 */
+    public int $dragPhase = 0;
+    /** 拖动鼠标键：0 左，1 右，2 中 */
+    public int $dragButton = 0;
+    /** @var array<int,int> 拖动经过的容器槽位 */
+    public array $dragSlots = [];
     /** 进服 1 秒后补发一次背包：有的客户端会忽略第一次 Window Items */
     public float $resendInvAt = 0.0;
     /** 创造模式第一次挖方块时提示一次「不掉落」，别每次都刷 */
@@ -105,6 +121,7 @@ final class Connection
 final class Server
 {
     use ChestTrait;
+    use CraftingTrait;
 
     public const PROTOCOL = 47;
     public const VERSION = '1.8.9';
@@ -121,6 +138,8 @@ final class Server
     private const C_ENTITY_TELEPORT = 0x18;
     private const C_HEAD_LOOK = 0x19;
     private const C_CHUNK_DATA = 0x21;
+    /** 1.8 的瓦片实体包：箱子这类方块没有它客户端就不画 */
+    private const C_UPDATE_TILE_ENTITY = 0x35;
     // 1.8：0x0B 是 Animation（挥手），0x0D 才是 Collect Item。
     // 写成 0x0B 的话客户端只会挥一下手，地上的东西永远不消失。
     private const C_ANIMATION = 0x0B;
@@ -492,6 +511,37 @@ final class Server
             ->varInt(strlen($data))
             ->raw($data));
         $c->sentChunks[$cx . ',' . $cz] = true;
+
+        // 区块包只带方块字节，不带瓦片实体。箱子没有 TileEntityChest
+        // 客户端就完全不画；重进世界「箱子消失」就是这个原因。
+        foreach ($this->world->chunk($cx, $cz)->blockPositions(54) as [$x, $y, $z]) {
+            $this->sendTileEntity($c, $x, $y, $z);
+        }
+    }
+
+    /**
+     * 0x35 Update Tile Entity：BlockPos + action + NBT。
+     * 客户端收到后会用世界里的方块建出 TileEntityChest，再读这份 NBT。
+     */
+    private function sendTileEntity(Connection $c, int $x, int $y, int $z): void
+    {
+        $nbt = Nbt::write(Tag::compound([
+            'id' => Tag::str('Chest'),
+            'x' => Tag::int($x),
+            'y' => Tag::int($y),
+            'z' => Tag::int($z),
+        ]));
+        $c->send(self::C_UPDATE_TILE_ENTITY, (new Writer())
+            ->long($this->packPosition($x, $y, $z))
+            ->byte(0)
+            ->raw($nbt));
+    }
+
+    private function broadcastTileEntity(int $x, int $y, int $z): void
+    {
+        foreach ($this->players() as $p) {
+            $this->sendTileEntity($p, $x, $y, $z);
+        }
     }
 
     private function sendChunks(Connection $c): void
@@ -706,17 +756,53 @@ final class Server
                     $this->openChest($c, $x, $y, $z);
                     break;
                 }
+                if ($hitId === 58) {
+                    $this->openWorkbench($c);
+                    break;
+                }
+
+                // 服务端这里是空气，客户端却对着它右键：说明客户端留了一块
+                // 「幽灵方块」（放置被拒后客户端不会自己撤销预测）。如果旁边
+                // 挨着真箱子，就把空气打回去擦掉幽灵，并打开那个真箱子 ——
+                // 表现就是「上面的箱子点不开」。
+                if ($hitId === 0 && $face <= 5) {
+                    $near = $this->chestNextTo($x, $y, $z, $face);
+                    if ($near !== null) {
+                        $c->send(self::C_BLOCK_CHANGE, (new Writer())
+                            ->long($this->packPosition($x, $y, $z))
+                            ->varInt(0));
+                        $this->log("  幽灵方块 @ {$x},{$y},{$z} -> 打开真箱子 {$near[0]},{$near[1]},{$near[2]}");
+                        $this->openChest($c, $near[0], $near[1], $near[2]);
+                        break;
+                    }
+                }
 
                 $itemId = $r->readShort();
-                if ($itemId <= 0 || $itemId > 255) {
+                if ($itemId <= 0) {
                     break; // 手上不是方块
+                }
+                // 1.8 有一部分物品 id 和方块 id 不是同一个数（甘蔗、种子、作物…），
+                // 直接拿物品 id 当方块 id 会让服务端拒绝放置。
+                $blockId = $itemId <= 255 ? $itemId : (self::PLACEABLE_ITEM[$itemId] ?? 0);
+                if ($blockId <= 0) {
+                    break; // 这个物品不能当方块放
                 }
                 $r->readByte();               // count
                 $damage = $r->readShort();     // 方块 meta 藏在 damage 里
 
                 [$tx, $ty, $tz] = self::offsetByFace($x, $y, $z, $face);
-                $this->log("  放 {$itemId} @ {$tx},{$ty},{$tz}（点的 {$x},{$y},{$z} 面 {$face}）");
-                $this->changeBlock($tx, $ty, $tz, $itemId, $damage & 0x0F);
+                if (!$this->canPlaceOn($blockId, $tx, $ty, $tz)) {
+                    // 客户端已经先画上去了，把服务端的真实状态打回去让它回弹
+                    $now = $this->world->chunk($tx >> 4, $tz >> 4)
+                        ->blockState($tx & 15, $ty, $tz & 15);
+                    $c->send(self::C_BLOCK_CHANGE, (new Writer())
+                        ->long($this->packPosition($tx, $ty, $tz))
+                        ->varInt($now));
+                    $this->log("  放 方块{$blockId} @ {$tx},{$ty},{$tz} 被拒：这个位置不能种");
+                    break;
+                }
+                $this->log("  放 方块{$blockId} @ {$tx},{$ty},{$tz}（物品 {$itemId}，点的 {$x},{$y},{$z} 面 {$face}）");
+                $this->changeBlock($tx, $ty, $tz, $blockId, $damage & 0x0F);
                 break;
 
             case 0x10: // 创造模式从背包拿东西
@@ -763,20 +849,46 @@ final class Server
                 $action = $r->readShort();
                 $mode = $r->readByte();
                 $cursor = $this->readSlotItem($r);
-                if ($windowId === 0 && $mode === 4) {
-                    $this->dropFromSlot($c, $slot, $button === 1);
+                if ($mode !== 5 && $c->dragPhase !== 0) {
+                    $this->resetDrag($c);
+                }
+                if ($mode === 5) {
+                    // 拖动开始/经过/结束，slot=-999 也要交给 handleDrag
+                    $this->handleDrag($c, $windowId, $slot, $button);
+                } elseif ($windowId === 2) {
+                    $this->clickWorkbench($c, $slot, $button, $mode, $cursor);
+                } elseif ($windowId === 0 && $mode === 4) {
+                    if ($c->cursor !== null) {
+                        $this->dropCursorItem($c, $button === 1);
+                    } else {
+                        $this->dropFromSlot($c, $slot, $button === 1);
+                    }
                 } elseif ($windowId === 0) {
                     $this->clickInventory($c, $slot, $button, $mode, $cursor);
                 } elseif ($windowId === 1) {
                     $this->clickChest($c, $slot, $button, $mode, $cursor);
+                }
+                // 每次真正改变槽位后整窗覆盖一次，客户端本地预测错了也会被纠正，
+                // 不会出现「Shift 出一堆」「合成完又消失」这种分叉。
+                if (($mode === 5 && ($button & 3) === 2) || $mode !== 5) {
+                    $this->sendFullWindow($c);
+                    $this->sendCursor($c, $windowId);
                 }
                 $c->send(self::C_CONFIRM_TRANSACTION, (new Writer())
                     ->byte($windowId)->short($action)->bool(true));
                 break;
 
             case 0x0D: // Close Window
-                $r->readByte();
-                $this->closeChest($c);
+                $windowId = $r->readByte();
+                $this->resetDrag($c);
+                if ($windowId === 2) {
+                    $this->closeWorkbench($c);
+                } else {
+                    $this->closeChest($c);
+                    $this->returnCraftGrid($c);
+                }
+                $this->returnCursor($c);
+                $this->sendPlayerInventory($c);
                 break;
 
             case 0x13: // 客户端报能力（比如开始飞）
@@ -801,12 +913,19 @@ final class Server
         $chunk = $this->world->chunk($x >> 4, $z >> 4);
         $existing = $chunk->blockState($x & 15, $y, $z & 15);
         if ($id !== 0 && $existing !== 0 && !self::isReplaceable($existing >> 4)) {
+            // 客户端已经先把方块画上去了。这里必须把服务端的真实方块打回去，
+            // 否则客户端会一直留一块幽灵方块，右键它只会继续发放置包。
+            $this->broadcastBlockChange($x, $y, $z, $existing);
+            $this->log("  放 方块{$id} @ {$x},{$y},{$z} 被拒：目标被方块" . ($existing >> 4) . ' 占着');
+
             return; // 目标被实心方块占着，放不进去
         }
         if ($existing !== 0) {
             $this->log("  替换方块 {$existing} @ {$x},{$y},{$z}");
         }
         if (!$chunk->setBlock($x & 15, $y, $z & 15, $id, $meta)) {
+            $this->broadcastBlockChange($x, $y, $z, $existing);
+
             return;
         }
 
@@ -819,6 +938,62 @@ final class Server
 
         $this->broadcastBlockChange($x, $y, $z, (($id & 0xFF) << 4) | ($meta & 0x0F));
         $this->markSection($x, $y, $z);
+
+        if ($id === 54) {
+            // 新放的箱子要立刻补瓦片实体，否则客户端只有方块、画不出箱子。
+            $this->broadcastTileEntity($x, $y, $z);
+            // 挨着的箱子也要重发一次，客户端才会重新算双箱子模型。
+            foreach ([[1, 0], [-1, 0], [0, 1], [0, -1]] as [$dx, $dz]) {
+                $nx = $x + $dx;
+                $nz = $z + $dz;
+                if (($this->world->chunk($nx >> 4, $nz >> 4)
+                    ->blockState($nx & 15, $y, $nz & 15) >> 4) === 54) {
+                    $this->broadcastTileEntity($nx, $y, $nz);
+                }
+            }
+        }
+    }
+
+    /**
+     * 原版的支撑检查：种植物只能种在对应的方块上。
+     * 甘蔗：下面的方块是草/泥土/沙子，且四邻有水；已经在甘蔗上可以继续叠。
+     * 地狱疣：灵魂沙。小麦/胡萝卜/马铃薯：耕地。
+     */
+    private function canPlaceOn(int $id, int $x, int $y, int $z): bool
+    {
+        if ($y <= 0 || $y > 255) {
+            return false;
+        }
+        $below = $this->world->chunk($x >> 4, $z >> 4)
+            ->blockState($x & 15, $y - 1, $z & 15) >> 4;
+
+        if ($id === 83) {
+            if ($below === 83) {
+                return true;
+            }
+            if (!in_array($below, [2, 3, 12], true)) {
+                return false;
+            }
+            foreach ([[-1, 0], [1, 0], [0, -1], [0, 1]] as [$dx, $dz]) {
+                $wx = $x + $dx;
+                $wz = $z + $dz;
+                $water = $this->world->chunk($wx >> 4, $wz >> 4)
+                    ->blockState($wx & 15, $y - 1, $wz & 15) >> 4;
+                if ($water === 8 || $water === 9) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        if ($id === 115) {                 // 地狱疣 -> 灵魂沙
+            return $below === 88;
+        }
+        if ($id === 59 || $id === 141 || $id === 142) {  // 作物 -> 耕地
+            return $below === 60;
+        }
+
+        return true;
     }
 
     /** 草、花、雪层这些原版可以直接盖掉的方块 */
@@ -869,21 +1044,8 @@ final class Server
 
         if ($id === 54) {
             // 原版 BlockChest.breakBlock：内容全掉出来，再删掉 TileEntity。
-            // 只把方块变空气、不处理内容，就会「打掉不掉东西」，
-            // 而且数据还留着 —— 再放个箱子旧东西又回来了。
-            foreach ($this->chests->load($x, $y, $z) as $item) {
-                if ($item !== null && $item['count'] > 0) {
-                    $this->spawnDrop($x, $y, $z, $item['id'], $item['count'], $item['damage'], $c);
-                }
-            }
-            $this->chests->remove($x, $y, $z);
-            foreach ($this->players() as $p) {
-                if ($p->chest !== null
-                    && $p->chest['x'] === $x && $p->chest['y'] === $y && $p->chest['z'] === $z) {
-                    $p->chest['slots'] = array_fill(0, 27, null);
-                    $this->closeChest($p);
-                }
-            }
+            // 双箱子只掉被打掉的那半边，另一半保留。
+            $this->breakChestBlock($c, $x, $y, $z);
         }
 
         $this->addExhaustion($c, 0.005);   // 挖一块 0.005（原版数值）
@@ -910,6 +1072,9 @@ final class Server
         [$dropId, $count] = self::dropOf($id, $meta);
         if ($dropId > 0 && $count > 0) {
             $this->spawnDrop($x, $y, $z, $dropId, $count, $dropId === $id ? $meta : 0, $c);
+        }
+        foreach (self::extraDrops($id, $meta) as [$extraId, $extraCount]) {
+            $this->spawnDrop($x, $y, $z, $extraId, $extraCount, 0, $c);
         }
     }
 
@@ -1090,6 +1255,15 @@ final class Server
         175, // 双生花
     ];
 
+    /** 物品 id => 方块 id（1.8 里这几样物品 id 与方块 id 不同） */
+    private const PLACEABLE_ITEM = [
+        295 => 59,   // 小麦种子 -> 作物
+        338 => 83,   // 甘蔗 -> 芦苇
+        372 => 115,  // 地狱疣
+        391 => 141,  // 胡萝卜
+        392 => 142,  // 马铃薯
+    ];
+
     /**
      * 方块 id => [掉落物 id, 数量]。没列出来的默认掉自己（大多数建筑方块如此）。
      * 概率类的（树叶、砂砾、枯木、高草）单独在下面处理。
@@ -1110,7 +1284,7 @@ final class Server
         78 => [332, 1],     // 雪层 -> 雪球
         80 => [80, 1],      // 雪块
         82 => [337, 4],     // 黏土 -> 4 个黏土球
-        83 => [83, 1],      // 甘蔗
+        83 => [338, 1],     // 甘蔗（方块 83，物品 338）
         86 => [86, 1],      // 南瓜
         89 => [89, 1],      // 萤石
         91 => [91, 1],      // 南瓜灯
@@ -1135,6 +1309,22 @@ final class Server
 
     private static function dropOf(int $id, int $meta): array
     {
+        // 作物：方块 id 和物品 id 不同，而且要看 meta（age）决定掉什么
+        if ($id === 59) {
+            // 小麦：成熟掉小麦，没成熟掉种子；成熟的种子由 extraDrops 补
+            return $meta >= 7 ? [296, 1] : [295, 1];
+        }
+        if ($id === 115) {
+            // 地狱疣：成熟 2~4 个，没成熟 1 个
+            return [372, $meta >= 3 ? 2 + random_int(0, 2) : 1];
+        }
+        if ($id === 141) {
+            return [391, 1];   // 胡萝卜
+        }
+        if ($id === 142) {
+            return [392, 1];   // 马铃薯
+        }
+
         // 概率类的先处理
         if ($id === 18 || $id === 161) {
             // 原版：5% 树苗，0.5% 苹果（只有橡树叶掉苹果）
@@ -1169,6 +1359,32 @@ final class Server
         }
 
         return [$id, 1];     // 大多数建筑方块掉自己
+    }
+
+    /**
+     * 主掉落之外额外掉的东西（和原版 getItemDropped / dropBlockAsItemWithChance 对齐）：
+     * 成熟小麦额外掉 0~3 个种子，成熟马铃薯 2% 掉毒马铃薯。
+     *
+     * @return array<int, array{0:int,1:int}> [物品 id, 数量]
+     */
+    private static function extraDrops(int $id, int $meta): array
+    {
+        if ($id === 59 && $meta >= 7) {
+            // 原版：for i in 0..2，nextInt(15) <= i 时掉一个种子
+            $seeds = 0;
+            for ($i = 0; $i < 3; $i++) {
+                if (random_int(0, 14) <= $i) {
+                    $seeds++;
+                }
+            }
+
+            return $seeds > 0 ? [[295, $seeds]] : [];
+        }
+        if ($id === 142 && $meta >= 7 && random_int(1, 50) === 1) {
+            return [[394, 1]];
+        }
+
+        return [];
     }
 
     /**
@@ -1270,6 +1486,21 @@ final class Server
                 }
             }
 
+            // 服务端的简易物理和客户端的碰撞不完全一样，定期把真实位置打回去，
+            // 否则客户端画在 A、服务端在 B，站得很近也捡不到。
+            if (!isset($d['lastSync']) || $now - $d['lastSync'] >= 0.5) {
+                foreach ($this->players() as $p) {
+                    $p->send(self::C_ENTITY_TELEPORT, (new Writer())
+                        ->varInt($eid)
+                        ->int((int) ($d['x'] * 32))
+                        ->int((int) ($d['y'] * 32))
+                        ->int((int) ($d['z'] * 32))
+                        ->byte(0)->byte(0)->bool(true));
+                }
+                $d['lastSync'] = $now;
+                $this->drops[$eid] = $d;
+            }
+
             if ($now < $d['at']) {
                 continue;
             }
@@ -1319,6 +1550,14 @@ final class Server
                 continue;
             }
 
+            if (!$this->canGive($picker, $d['id'], $d['count'], $d['meta'])) {
+                if (!isset($d['loggedFull'])) {
+                    $this->log("  背包满，掉落 eid={$eid} 留在地上");
+                    $this->drops[$eid]['loggedFull'] = true;
+                }
+                continue;
+            }
+
             foreach ($this->players() as $p) {
                 $p->send(self::C_COLLECT_ITEM, (new Writer())
                     ->varInt($eid)
@@ -1358,7 +1597,12 @@ final class Server
             $this->sendSlot($c, $slot, $it);
         }
 
-        // 朝视线方向扔出去
+        $this->toss($c, $it['id'], $n, $it['damage']);
+    }
+
+    /** 朝视线方向扔出一个物品实体，客户端靠 Spawn Object 里的速度画抛物线 */
+    private function toss(Connection $c, int $id, int $count, int $damage): void
+    {
         $yaw = deg2rad($c->yaw);
         $pitch = deg2rad($c->pitch);
         $dx = -sin($yaw) * cos($pitch);
@@ -1368,11 +1612,27 @@ final class Server
         $py = $c->y + 1.3 + $dy * 0.3;
         $pz = $c->z + $dz * 0.3;
 
-        $this->throwItem($px, $py, $pz, $it['id'], $n, $it['damage'],
+        $this->throwItem($px, $py, $pz, $id, $count, $damage,
             (int) ($dx * 2400), (int) ($dy * 2400 + 600), (int) ($dz * 2400));
     }
 
-    /** 给某一个玩家补发一条掉落实体（进服时用，速度给 0）。 */
+    /** 背包界面里 Q 键：光标上拿着东西时从光标丢 */
+    private function dropCursorItem(Connection $c, bool $all): void
+    {
+        if ($c->cursor === null) {
+            return;
+        }
+        $it = $c->cursor;
+        $n = $all ? $it['count'] : 1;
+        $left = $it['count'] - $n;
+        $c->cursor = $left > 0
+            ? ['id' => $it['id'], 'count' => $left, 'damage' => $it['damage']]
+            : null;
+        $this->sendCursor($c);
+        $this->toss($c, $it['id'], $n, $it['damage']);
+    }
+
+    /** 给某一个玩家补发一条掉落实体（进服时用，带服务端当前速度）。 */
     private function sendDropSpawn(Connection $p, int $eid, array $d): void
     {
         if (($d['id'] ?? 0) <= 0 || ($d['count'] ?? 0) <= 0) {
@@ -1386,7 +1646,10 @@ final class Server
             ->int((int) ($d['y'] * 32))
             ->int((int) ($d['z'] * 32))
             ->byte(0)->byte(0)
-            ->int(0));
+            ->int(1)
+            ->short((int) ($d['vx'] ?? 0))
+            ->short((int) ($d['vy'] ?? 0))
+            ->short((int) ($d['vz'] ?? 0)));
         $p->send(self::C_ENTITY_METADATA, (new Writer())
             ->varInt($eid)
             ->byte((5 << 5) | 10)
@@ -1426,10 +1689,11 @@ final class Server
                 ->int((int) ($py * 32))
                 ->int((int) ($pz * 32))
                 ->byte(0)->byte(0)
-                // data=0：不带速度。1.8 的客户端只有在 data>0 时才读那 3 个
-                // short；我们给 1 的时候它读，但读到的速度可能让它一生成就被
-                // 判定到别处。先用最保守的写法。
-                ->int(0));
+                // 1.8 的 Spawn Object 只有在 data>0 时才带速度三个 short。
+                // data=0 会让客户端把物品钉在出生点，之后服务端自己算的抛物线
+                // 客户端完全看不到，所以捡东西时位置对不上。
+                ->int(1)
+                ->short($vx)->short($vy)->short($vz));
             $p->send(self::C_ENTITY_METADATA, (new Writer())
                 ->varInt($eid)
                 ->byte((5 << 5) | 10)
@@ -1498,14 +1762,15 @@ final class Server
 
         foreach ($slots as $slot) {
             $it = $c->inventory[$slot] ?? null;
-            if ($it === null || $it['id'] !== $id || $it['damage'] !== $damage || $it['count'] >= 64) {
+            if ($it === null || $it['id'] !== $id || $it['damage'] !== $damage
+                || $it['count'] >= self::maxStack($id)) {
                 continue;
             }
-            $add = min(64 - $it['count'], $count);
+            $add = min(self::maxStack($id) - $it['count'], $count);
             $it['count'] += $add;
             $count -= $add;
             $c->inventory[$slot] = $it;
-            $this->sendSlot($c, $slot, $it);
+            $this->sendInventorySlot($c, $slot, $it);
             if ($count <= 0) {
                 return;
             }
@@ -1515,14 +1780,37 @@ final class Server
             if (isset($c->inventory[$slot])) {
                 continue;
             }
-            $it = ['id' => $id, 'count' => min(64, $count), 'damage' => $damage];
+            $it = ['id' => $id, 'count' => min(self::maxStack($id), $count), 'damage' => $damage];
             $c->inventory[$slot] = $it;
             $count -= $it['count'];
-            $this->sendSlot($c, $slot, $it);
+            $this->sendInventorySlot($c, $slot, $it);
             if ($count <= 0) {
                 return;
             }
         }
+    }
+
+    /** 背包里还能放多少个指定物品 */
+    private function giveSpace(Connection $c, int $id, int $damage): int
+    {
+        $slots = array_merge(range(36, 44), range(9, 35));
+        $space = 0;
+        foreach ($slots as $slot) {
+            $it = $c->inventory[$slot] ?? null;
+            if ($it === null) {
+                $space += self::maxStack($id);
+            } elseif ($it['id'] === $id && $it['damage'] === $damage) {
+                $space += max(0, self::maxStack($id) - $it['count']);
+            }
+        }
+
+        return $space;
+    }
+
+    /** 背包里是否放得下这么多（用于合成输出/拾取，放不下就别消耗/别捡） */
+    private function canGive(Connection $c, int $id, int $count, int $damage): bool
+    {
+        return $this->giveSpace($c, $id, $damage) >= $count;
     }
 
     private function sendSlot(Connection $c, int $slot, array $it): void
@@ -1804,69 +2092,577 @@ final class Server
             ->float(5.0));
     }
 
-    /**
-     * 玩家自己背包里的点击（windowId 0）。
-     * 不处理这个，客户端在背包里拖动物品只是本地动，服务端那份不变，
-     * 重进时推回旧数据 —— 玩家看到的就是「东西自己跳回快捷栏」。
-     */
-    private function clickInventory(Connection $c, int $slot, int $button, int $mode, ?array $cursor): void
+    /** 发送窗口里的一个槽位（null = 空槽） */
+    private function sendWindowSlot(Connection $c, int $windowId, int $slot, ?array $item): void
     {
-        if ($slot < 9 || $slot > 44) {
-            return;   // 合成格、盔甲格先不管
+        $c->send(self::C_SET_SLOT, (new Writer())
+            ->byte($windowId)->short($slot)->raw($this->slotBytes($item)));
+    }
+
+    /** 同步服务端记录的光标物品（窗口槽位 -1） */
+    private function sendCursor(Connection $c, int $windowId = 0): void
+    {
+        $this->sendWindowSlot($c, $windowId, -1, $c->cursor);
+    }
+
+    /** 按当前打开的窗口，把玩家背包槽位换算成容器槽位再发 Set Slot */
+    private function sendInventorySlot(Connection $c, int $invSlot, ?array $item): void
+    {
+        if ($c->chest !== null) {
+            $size = $c->chest['size'] ?? 27;
+            $slot = $invSlot <= 35 ? $size + ($invSlot - 9) : $size + 27 + ($invSlot - 36);
+            $this->sendWindowSlot($c, 1, $slot, $item);
+
+            return;
+        }
+        if ($c->workbench) {
+            $slot = $invSlot <= 35 ? 10 + ($invSlot - 9) : 37 + ($invSlot - 36);
+            $this->sendWindowSlot($c, 2, $slot, $item);
+
+            return;
+        }
+        $this->sendWindowSlot($c, 0, $invSlot, $item);
+    }
+
+    /** 关窗/掉线时把光标上的东西塞回背包，别吞掉 */
+    private function returnCursor(Connection $c): void
+    {
+        if ($c->cursor === null) {
+            return;
+        }
+        $this->giveItem($c, $c->cursor['id'], $c->cursor['count'], $c->cursor['damage']);
+        $c->cursor = null;
+        $this->sendCursor($c);
+    }
+
+    /** 物品最大堆叠数：工具/武器/盔甲 1，雪球/鸡蛋/末影珍珠 16，其余 64 */
+    private static function maxStack(int $id): int
+    {
+        if (in_array($id, [
+            256, 257, 258, 259, 261,
+            267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279,
+            283, 284, 285, 286, 290, 291, 292, 293, 294,
+            298, 299, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309,
+            310, 311, 312, 313, 314, 315, 316, 317,
+            346, 354, 355, 358, 359, 373,
+        ], true)) {
+            return 1;
+        }
+        if (in_array($id, [332, 344, 368], true)) {
+            return 16;
         }
 
-        $cur = $c->inventory[$slot] ?? null;
-        $next = $cur;
+        return 64;
+    }
 
-        if ($mode === 0 && $button === 0) {
-            $next = $cursor;
-        } elseif ($mode === 0 && $button === 1 && $cursor === null && $cur !== null) {
+    /**
+     * 左键/右键点击的核心：根据当前槽位和服务端光标算新的 [槽位, 光标]。
+     * Click Window 包里带的是客户端预测后的光标，不能直接当槽位内容用。
+     *
+     * @return array{0:?array,1:?array} [新槽位物品, 新光标物品]
+     */
+    private static function clickedStacks(?array $cur, ?array $cursor, int $button): array
+    {
+        if ($cursor === null) {
+            if ($cur === null) {
+                return [null, null];
+            }
+            if ($button === 0) {
+                return [null, $cur];                 // 拿起整堆
+            }
             $half = (int) ceil($cur['count'] / 2);
             $rest = $cur['count'] - $half;
-            $next = $rest > 0 ? ['id' => $cur['id'], 'count' => $rest, 'damage' => $cur['damage']] : null;
-        } elseif ($mode === 0 && $button === 1 && $cursor !== null && $cur === null) {
-            $next = ['id' => $cursor['id'], 'count' => 1, 'damage' => $cursor['damage']];
-        } elseif ($mode === 0 && $button === 1 && $cursor !== null && $cur !== null
-            && $cur['id'] === $cursor['id'] && $cur['damage'] === $cursor['damage'] && $cur['count'] < 64) {
-            $next = ['id' => $cur['id'], 'count' => $cur['count'] + 1, 'damage' => $cur['damage']];
-        } elseif ($mode === 1 && $cur !== null) {
-            // Shift：在快捷栏(36-44)和主区(9-35)之间搬
-            $range = $slot >= 36 ? [9, 35] : [36, 44];
-            for ($i = $range[0]; $i <= $range[1]; $i++) {
-                if (($c->inventory[$i] ?? null) === null) {
-                    $c->inventory[$i] = $cur;
-                    unset($c->inventory[$slot]);
-                    $c->send(self::C_SET_SLOT, (new Writer())
-                        ->byte(0)->short($i)->raw($this->slotBytes($cur)));
-                    $c->send(self::C_SET_SLOT, (new Writer())
-                        ->byte(0)->short($slot)->raw($this->slotBytes(null)));
+            $slot = $rest > 0 ? ['id' => $cur['id'], 'count' => $rest, 'damage' => $cur['damage']] : null;
 
-                    return;
+            return [$slot, ['id' => $cur['id'], 'count' => $half, 'damage' => $cur['damage']]];
+        }
+
+        if ($cur === null) {
+            if ($button === 0) {
+                return [$cursor, null];              // 放下整堆
+            }
+            $left = $cursor['count'] - 1;
+            $slot = ['id' => $cursor['id'], 'count' => 1, 'damage' => $cursor['damage']];
+            $hand = $left > 0 ? ['id' => $cursor['id'], 'count' => $left, 'damage' => $cursor['damage']] : null;
+
+            return [$slot, $hand];
+        }
+
+        if ($cur['id'] === $cursor['id'] && $cur['damage'] === $cursor['damage']) {
+            if ($button === 0) {
+                $total = $cur['count'] + $cursor['count'];
+                $take = min(self::maxStack($cur['id']), $total);
+                $left = $total - $take;
+                $slot = ['id' => $cur['id'], 'count' => $take, 'damage' => $cur['damage']];
+                $hand = $left > 0 ? ['id' => $cursor['id'], 'count' => $left, 'damage' => $cursor['damage']] : null;
+
+                return [$slot, $hand];
+            }
+            if ($cur['count'] < self::maxStack($cur['id'])) {
+                $left = $cursor['count'] - 1;
+                $slot = ['id' => $cur['id'], 'count' => $cur['count'] + 1, 'damage' => $cur['damage']];
+                $hand = $left > 0 ? ['id' => $cursor['id'], 'count' => $left, 'damage' => $cursor['damage']] : null;
+
+                return [$slot, $hand];
+            }
+
+            return [$cur, $cursor];
+        }
+
+        return $button === 0 ? [$cursor, $cur] : [$cur, $cursor];
+    }
+
+    /** Shift 搬运：先合并同类，再找空位，把变化过的槽位都发回客户端 */
+    private function shiftStacks(Connection $c, int $from, array $stack, array $range): void
+    {
+        $remaining = $stack;
+        $changed = [];
+
+        for ($i = $range[0]; $i <= $range[1] && $remaining['count'] > 0; $i++) {
+            $it = $c->inventory[$i] ?? null;
+            if ($it === null || $it['id'] !== $remaining['id']
+                || $it['damage'] !== $remaining['damage']
+                || $it['count'] >= self::maxStack($remaining['id'])) {
+                continue;
+            }
+            $add = min(self::maxStack($remaining['id']) - $it['count'], $remaining['count']);
+            $it['count'] += $add;
+            $remaining['count'] -= $add;
+            $c->inventory[$i] = $it;
+            $changed[$i] = $it;
+        }
+        if ($remaining['count'] > 0) {
+            for ($i = $range[0]; $i <= $range[1]; $i++) {
+                if (isset($c->inventory[$i])) {
+                    continue;
                 }
+                $c->inventory[$i] = $remaining;
+                $changed[$i] = $remaining;
+                $remaining = null;
+                break;
+            }
+        }
+        if ($remaining === null) {
+            unset($c->inventory[$from]);
+            $changed[$from] = null;
+        } else {
+            $c->inventory[$from] = $remaining;
+            if ($remaining['count'] !== $stack['count']) {
+                $changed[$from] = $remaining;
+            }
+        }
+
+        foreach ($changed as $i => $it) {
+            $this->sendWindowSlot($c, 0, $i, $it);
+        }
+    }
+
+
+    /**
+     * Shift+点击背包物品时快速填入合成格（2x2 或 3x3）。
+     * 优先放整堆到第一个空格，其次合并到同类格；返回实际移入的数量。
+     */
+    private function quickFillGrid(Connection $c, int $windowId, array $stack): int
+    {
+        $limit = $windowId === 2 ? 9 : 4;
+        $grid = $windowId === 2 ? $c->craft9 : $c->craftGrid;
+        $moved = 0;
+
+        for ($i = 0; $i < $limit; $i++) {
+            if ($grid[$i] !== null) {
+                continue;
+            }
+            $grid[$i] = $stack;
+            $moved = $stack['count'];
+            break;
+        }
+        if ($moved === 0) {
+            for ($i = 0; $i < $limit; $i++) {
+                $it = $grid[$i];
+                if ($it === null || $it['id'] !== $stack['id'] || $it['damage'] !== $stack['damage']) {
+                    continue;
+                }
+                $add = min(self::maxStack($stack['id']) - $it['count'], $stack['count']);
+                if ($add <= 0) {
+                    continue;
+                }
+                $it['count'] += $add;
+                $grid[$i] = $it;
+                $moved = $add;
+                break;
+            }
+        }
+        if ($moved <= 0) {
+            return 0;
+        }
+
+        if ($windowId === 2) {
+            $c->craft9 = $grid;
+        } else {
+            $c->craftGrid = $grid;
+        }
+
+        return $moved;
+    }
+
+    /** 1.8 拖动（mode 5）：开始/经过/结束时才真正分发 */
+    private function handleDrag(Connection $c, int $windowId, int $slot, int $button): void
+    {
+        $phase = $button & 3;
+        $mouse = ($button >> 2) & 3;
+        $this->log("  拖动 window={$windowId} slot={$slot} button={$button} phase={$phase} cursor=" . json_encode($c->cursor));
+
+        if ($phase === 0) {
+            if ($slot !== -999 || $c->cursor === null) {
+                $this->resetDrag($c);
+
+                return;
+            }
+            $c->dragPhase = 1;
+            $c->dragButton = $mouse;
+            $c->dragSlots = [];
+
+            return;
+        }
+
+        if ($phase === 1) {
+            if ($c->cursor === null) {
+                $this->resetDrag($c);
+
+                return;
+            }
+            if ($c->dragPhase === 0) {
+                // 有些客户端会先发经过槽位，补一个开始
+                $c->dragPhase = 1;
+                $c->dragButton = $mouse;
+                $c->dragSlots = [];
+            }
+            if (!$this->dragSlotAllowed($c, $windowId, $slot)) {
+                return;
+            }
+            $cur = $this->dragGetSlot($c, $windowId, $slot);
+            if ($cur !== null && ($cur['id'] !== $c->cursor['id']
+                || $cur['damage'] !== $c->cursor['damage']
+                || $cur['count'] >= self::maxStack($cur['id']))) {
+                return;
+            }
+            $c->dragSlots[$slot] = $slot;
+
+            return;
+        }
+
+        if ($phase === 2) {
+            if ($c->dragPhase === 1) {
+                $this->applyDrag($c, $windowId);
+            }
+            $this->resetDrag($c);
+        }
+    }
+
+    private function resetDrag(Connection $c): void
+    {
+        $c->dragPhase = 0;
+        $c->dragButton = 0;
+        $c->dragSlots = [];
+    }
+
+    private function dragSlotAllowed(Connection $c, int $windowId, int $slot): bool
+    {
+        if ($windowId === 2) {
+            return ($slot >= 1 && $slot <= 9) || ($slot >= 10 && $slot <= 45);
+        }
+        if ($windowId === 1) {
+            $size = $c->chest['size'] ?? 27;
+
+            return $slot >= 0 && $slot <= $size + 35;
+        }
+
+        return ($slot >= 1 && $slot <= 4) || ($slot >= 9 && $slot <= 44);
+    }
+
+    private function dragGetSlot(Connection $c, int $windowId, int $slot): ?array
+    {
+        if ($windowId === 2) {
+            if ($slot >= 1 && $slot <= 9) {
+                return $c->craft9[$slot - 1];
+            }
+            $inv = $slot <= 36 ? 9 + ($slot - 10) : 36 + ($slot - 37);
+
+            return $c->inventory[$inv] ?? null;
+        }
+        if ($windowId === 1) {
+            return $this->windowSlots($c)[$slot];
+        }
+        if ($slot >= 1 && $slot <= 4) {
+            return $c->craftGrid[$slot - 1];
+        }
+
+        return $c->inventory[$slot] ?? null;
+    }
+
+    private function dragSetSlot(Connection $c, int $windowId, int $slot, ?array $item): void
+    {
+        if ($windowId === 2) {
+            if ($slot >= 1 && $slot <= 9) {
+                $c->craft9[$slot - 1] = $item;
+
+                return;
+            }
+            $inv = $slot <= 36 ? 9 + ($slot - 10) : 36 + ($slot - 37);
+            if ($item === null) {
+                unset($c->inventory[$inv]);
+            } else {
+                $c->inventory[$inv] = $item;
             }
 
             return;
+        }
+        if ($windowId === 1) {
+            $this->setWindowSlot($c, $slot, $item);
+
+            return;
+        }
+        if ($slot >= 1 && $slot <= 4) {
+            $c->craftGrid[$slot - 1] = $item;
+
+            return;
+        }
+        if ($item === null) {
+            unset($c->inventory[$slot]);
         } else {
+            $c->inventory[$slot] = $item;
+        }
+    }
+
+    /** 结束拖动时把光标物品按左拖平均/右拖每格一个分发 */
+    private function applyDrag(Connection $c, int $windowId): void
+    {
+        $slots = array_values($c->dragSlots);
+        if ($slots === [] || $c->cursor === null) {
             return;
         }
 
+        $remaining = $c->cursor;
+        $limit = self::maxStack($remaining['id']);
+        $changed = [];
+        $gridChanged = false;
+
+        if ($c->dragButton === 0) {
+            $n = count($slots);
+            $per = intdiv($remaining['count'], $n);
+            foreach ($slots as $slot) {
+                if ($remaining['count'] <= 0) {
+                    break;
+                }
+                $cur = $this->dragGetSlot($c, $windowId, $slot);
+                $have = $cur !== null ? $cur['count'] : 0;
+                if ($cur !== null && ($cur['id'] !== $remaining['id']
+                    || $cur['damage'] !== $remaining['damage'])) {
+                    continue;
+                }
+                $add = min($per, $limit - $have, $remaining['count']);
+                if ($add <= 0) {
+                    continue;
+                }
+                $next = $cur !== null
+                    ? ['id' => $cur['id'], 'count' => $have + $add, 'damage' => $cur['damage']]
+                    : ['id' => $remaining['id'], 'count' => $add, 'damage' => $remaining['damage']];
+                $this->dragSetSlot($c, $windowId, $slot, $next);
+                $changed[$slot] = $next;
+                $remaining['count'] -= $add;
+                if (($windowId === 2 && $slot >= 1 && $slot <= 9)
+                    || ($windowId === 0 && $slot >= 1 && $slot <= 4)) {
+                    $gridChanged = true;
+                }
+            }
+        } else {
+            foreach ($slots as $slot) {
+                if ($remaining['count'] <= 0) {
+                    break;
+                }
+                $cur = $this->dragGetSlot($c, $windowId, $slot);
+                $have = $cur !== null ? $cur['count'] : 0;
+                if ($cur !== null && ($cur['id'] !== $remaining['id']
+                    || $cur['damage'] !== $remaining['damage'] || $have >= $limit)) {
+                    continue;
+                }
+                $next = $cur !== null
+                    ? ['id' => $cur['id'], 'count' => $have + 1, 'damage' => $cur['damage']]
+                    : ['id' => $remaining['id'], 'count' => 1, 'damage' => $remaining['damage']];
+                $this->dragSetSlot($c, $windowId, $slot, $next);
+                $changed[$slot] = $next;
+                $remaining['count']--;
+                if (($windowId === 2 && $slot >= 1 && $slot <= 9)
+                    || ($windowId === 0 && $slot >= 1 && $slot <= 4)) {
+                    $gridChanged = true;
+                }
+            }
+        }
+
+        $c->cursor = $remaining['count'] > 0 ? $remaining : null;
+        foreach ($changed as $slot => $item) {
+            $this->sendWindowSlot($c, $windowId, $slot, $item);
+        }
+        if ($gridChanged) {
+            if ($windowId === 2) {
+                $this->updateWorkbenchOutput($c);
+            } else {
+                $this->updateCraftOutput($c);
+            }
+        }
+        $this->sendCursor($c, $windowId);
+    }
+
+    /**
+     * 玩家自己背包里的点击（windowId 0）。
+     * 注意：包里带的是客户端预测后的光标物品，服务端要用自己记录的
+     * $c->cursor 和当前槽位重新算，否则「拿起来」会被当成「放回去」，
+     * 客户端就会看到东西变双份。
+     */
+    private function clickInventory(Connection $c, int $slot, int $button, int $mode, ?array $cursor): void
+    {
+        // 2x2 合成格的 4 个槽位
+        if ($slot >= 1 && $slot <= 4) {
+            $i = $slot - 1;
+            if ($mode === 1) {
+                $it = $c->craftGrid[$i];
+                if ($it !== null) {
+                    $c->craftGrid[$i] = null;
+                    $this->sendWindowSlot($c, 0, $slot, null);
+                    $this->giveItem($c, $it['id'], $it['count'], $it['damage']);
+                    $this->updateCraftOutput($c);
+                    $this->sendCursor($c);
+                }
+
+                return;
+            }
+            if ($mode !== 0 || ($button !== 0 && $button !== 1)) {
+                $this->sendCursor($c);
+
+                return;
+            }
+            [$next, $newCursor] = self::clickedStacks($c->craftGrid[$i], $c->cursor, $button);
+            $c->craftGrid[$i] = $next;
+            $c->cursor = $newCursor;
+            $this->sendWindowSlot($c, 0, $slot, $next);
+            $this->updateCraftOutput($c);
+            $this->sendCursor($c);
+
+            return;
+        }
+        if ($slot === 0) {
+            $this->takeCraftOutput($c, $mode === 1);
+
+            return;
+        }
+
+        if ($slot < 9 || $slot > 44) {
+            $this->sendCursor($c);   // 盔甲格先不管，至少把光标同步回来
+
+            return;
+        }
+
+        $cur = $c->inventory[$slot] ?? null;
+
+        if ($mode === 1 && $cur !== null) {
+            // Shift+点击背包物品：优先快速填入 2x2 合成格
+            $moved = $this->quickFillGrid($c, 0, $cur);
+            if ($moved > 0) {
+                $left = $cur['count'] - $moved;
+                if ($left > 0) {
+                    $cur['count'] = $left;
+                    $c->inventory[$slot] = $cur;
+                } else {
+                    unset($c->inventory[$slot]);
+                }
+                $this->updateCraftOutput($c);
+                $this->sendCursor($c);
+
+                return;
+            }
+
+            $range = $slot >= 36 ? [9, 35] : [36, 44];
+            $this->shiftStacks($c, $slot, $cur, $range);
+            $this->sendCursor($c);
+
+            return;
+        }
+        if ($mode !== 0 || ($button !== 0 && $button !== 1)) {
+            $this->sendCursor($c);
+
+            return;
+        }
+
+        [$next, $newCursor] = self::clickedStacks($cur, $c->cursor, $button);
+        $c->cursor = $newCursor;
         if ($next === null) {
             unset($c->inventory[$slot]);
         } else {
             $c->inventory[$slot] = $next;
         }
-        $c->send(self::C_SET_SLOT, (new Writer())
-            ->byte(0)->short($slot)->raw($this->slotBytes($next)));
+        $this->sendWindowSlot($c, 0, $slot, $next);
+        $this->sendCursor($c);
     }
 
     /** 把 45 格背包推给客户端（windowId 0 = 玩家自己的背包） */
     private function sendPlayerInventory(Connection $c): void
     {
         $w = (new Writer())->byte(0)->short(45);
-        for ($i = 0; $i < 45; $i++) {
+        // 0 输出，1-4 2x2 合成格，5-8 盔甲，9-44 背包
+        $w->raw($this->slotBytes(self::matchCraft2x2($c->craftGrid)));
+        for ($i = 0; $i < 4; $i++) {
+            $w->raw($this->slotBytes($c->craftGrid[$i]));
+        }
+        for ($i = 5; $i <= 8; $i++) {
+            $w->raw($this->slotBytes($c->inventory[$i] ?? null));
+        }
+        for ($i = 9; $i < 45; $i++) {
             $w->raw($this->slotBytes($c->inventory[$i] ?? null));
         }
         $c->send(self::C_WINDOW_ITEMS, $w);
+    }
+
+    private function sendWorkbenchItems(Connection $c): void
+    {
+        $w = (new Writer())->byte(2)->short(46);
+        // 0 输出，1-9 3x3 合成格，10-36 主背包，37-45 快捷栏
+        $w->raw($this->slotBytes(self::matchCraft3x3($c->craft9)));
+        for ($i = 0; $i < 9; $i++) {
+            $w->raw($this->slotBytes($c->craft9[$i]));
+        }
+        for ($i = 9; $i <= 35; $i++) {
+            $w->raw($this->slotBytes($c->inventory[$i] ?? null));
+        }
+        for ($i = 36; $i <= 44; $i++) {
+            $w->raw($this->slotBytes($c->inventory[$i] ?? null));
+        }
+        $c->send(self::C_WINDOW_ITEMS, $w);
+    }
+
+    private function sendChestItems(Connection $c): void
+    {
+        $size = $c->chest['size'] ?? 27;
+        $w = (new Writer())->byte(1)->short($size + 36);
+        foreach ($this->windowSlots($c) as $item) {
+            $w->raw($this->slotBytes($item));
+        }
+        $c->send(self::C_WINDOW_ITEMS, $w);
+    }
+
+    /** 用服务端状态整窗覆盖客户端，避免客户端本地预测和背包状态分叉 */
+    private function sendFullWindow(Connection $c): void
+    {
+        if ($c->chest !== null) {
+            $this->sendChestItems($c);
+
+            return;
+        }
+        if ($c->workbench) {
+            $this->sendWorkbenchItems($c);
+
+            return;
+        }
+        $this->sendPlayerInventory($c);
     }
 
     /** 掉血；掉到 0 就回出生点（不做死亡界面，先把机制跑通）。 */
@@ -1991,6 +2787,7 @@ final class Server
             if ($p->resendInvAt > 0 && $now >= $p->resendInvAt) {
                 $p->resendInvAt = 0.0;
                 $this->sendPlayerInventory($p);
+                $this->sendCursor($p);
             }
         }
 
@@ -2020,14 +2817,18 @@ final class Server
             // 客户端崩了/直接断线时不会发 Close Window，箱子内容得在这里补存，
             // 不然刚放进去的东西就丢了。
             if ($c->chest !== null) {
-                $this->chests->save(
-                    $c->chest['x'],
-                    $c->chest['y'],
-                    $c->chest['z'],
-                    $c->chest['slots']
-                );
+                $this->saveChestWindow($c);
                 $c->chest = null;
             }
+            $this->closeWorkbench($c);
+            $this->resetDrag($c);
+            if ($c->cursor !== null) {
+                // 光标上的东西还没放下就断线：塞回背包，别吞掉
+                $cursor = $c->cursor;
+                $c->cursor = null;
+                $this->giveItem($c, $cursor['id'], $cursor['count'], $cursor['damage']);
+            }
+            $this->returnCraftGrid($c);
             $this->log("  存背包 " . count($c->inventory) . ' 格');
             $this->world->rememberVitals($c->username, $c->food, $c->health);
             $this->world->rememberGamemode($c->username, $c->gamemode);
@@ -2096,6 +2897,28 @@ final class Server
         }
 
         return [$x, $y, $z];
+    }
+
+    /**
+     * 找玩家点的那块「空气」旁边最近的箱子。
+     * 先按点击的面找（客户端点幽灵半箱时，真箱子就在面朝的方向），
+     * 找不到再按四个水平方向兜底。
+     *
+     * @return array{0:int,1:int,2:int}|null
+     */
+    private function chestNextTo(int $x, int $y, int $z, int $face): ?array
+    {
+        [$tx, $ty, $tz] = self::offsetByFace($x, $y, $z, $face);
+        if ($this->chestIdAt($tx, $ty, $tz) === 54) {
+            return [$tx, $ty, $tz];
+        }
+        foreach ([[1, 0], [-1, 0], [0, 1], [0, -1]] as [$dx, $dz]) {
+            if ($this->chestIdAt($x + $dx, $y, $z + $dz) === 54) {
+                return [$x + $dx, $y, $z + $dz];
+            }
+        }
+
+        return null;
     }
 
     /** @return array{0:int,1:int,2:int} */

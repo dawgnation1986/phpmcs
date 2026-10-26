@@ -26,6 +26,14 @@ final class AnvilWorld
     public bool $created = false;
     /** @var array<string, bool> 已经记过「读不到」的区块，别刷屏 */
     private array $missingLogged = [];
+    /** 地形噪声的种子，取自 level.dat 的 RandomSeed */
+    private int $seed = 0;
+    /** 独立的地形生成器（噪声/群系拆在 TerrainGenerator.php） */
+    private TerrainGenerator $generator;
+    /** 旧生成器写过、等待迁移落盘的区块 key */
+    private array $migrated = [];
+    /** 旧生成区块的 LastUpdate 阈值（Unix 秒） */
+    private int $migrationCutoff = 0;
 
     public function __construct(private string $dir)
     {
@@ -40,6 +48,14 @@ final class AnvilWorld
             $this->ensureSkeleton();
             $this->writeLevelDat();
         }
+        $this->seed = Nbt::int($this->data(), 'RandomSeed', 0);
+        $this->generator = new TerrainGenerator($this->seed);
+        // 旧生成器用 time() 当 LastUpdate，原版存的是游戏刻（通常很小）。
+        // 用等级存档的 LastPlayed 做下限，避免把正常原版区块当成旧生成区块。
+        $this->migrationCutoff = max(
+            1_000_000_000,
+            intdiv(Nbt::int($this->data(), 'LastPlayed', 0), 1000)
+        );
     }
 
     /**
@@ -107,10 +123,17 @@ final class AnvilWorld
 
         $root = $this->readChunk($cx, $cz);
         if ($root !== null) {
-            return $this->chunks[$key] = new Chunk($cx, $cz, $root);
+            $chunk = new Chunk($cx, $cz, $root);
+            if (isset($this->migrated[$key])) {
+                // 旧生成区块的 nibble 已经就地修正，写回磁盘
+                $chunk->dirty = true;
+                unset($this->migrated[$key]);
+            }
+
+            return $this->chunks[$key] = $chunk;
         }
 
-        // 读不到就生成平地。这一步必须留痕：玩家遇到过「跑着跑着地形全变超平坦」，
+        // 读不到就生成地形。这一步必须留痕：玩家遇到过「跑着跑着地形全变超平坦」，
         // 说明某个区块读失败了，然后这份生成的平地被缓存下来顶替了真地形。
         if ($this->created === false && !isset($this->missingLogged[$cx . ',' . $cz])) {
             $this->missingLogged[$cx . ',' . $cz] = true;
@@ -119,18 +142,37 @@ final class AnvilWorld
             $path = $this->dir . DIRECTORY_SEPARATOR . 'region'
                 . DIRECTORY_SEPARATOR . "r.{$rx}.{$rz}.mca";
             error_log(sprintf(
-                '[phpmcs] 区块 %d,%d 读不到，临时用平地顶替（%s %s）',
+                '[phpmcs] 区块 %d,%d 读不到，临时生成地形顶替（%s %s）',
                 $cx,
                 $cz,
                 is_file($path) ? '存在' : '不存在',
                 $path
             ));
         }
-        $chunk = new Chunk($cx, $cz, self::flatChunk($cx, $cz));
-        // 我们自己造的世界：生成即落盘；别人的存档：只发不写，免得把平地糊进人家世界
-        $chunk->dirty = $this->created;
+        $chunk = new Chunk($cx, $cz, $this->generator->generate($cx, $cz));
+        // 磁盘上本来就没有这个区块：生成后落盘，下次直接读，不再临时生成。
+        // 条目存在但读坏了就先不写，避免把可能有救的数据覆盖掉。
+        $chunk->dirty = !$this->hasChunkEntry($cx, $cz);
 
         return $this->chunks[$key] = $chunk;
+    }
+
+    /** 磁盘上有没有这个区块的条目（不管能不能解析） */
+    private function hasChunkEntry(int $cx, int $cz): bool
+    {
+        $fh = $this->regionHandle($cx >> 5, $cz >> 5, false);
+        if ($fh === null) {
+            return false;
+        }
+        $idx = ($cx & 31) + ($cz & 31) * 32;
+        fseek($fh, $idx * 4);
+        $entry = fread($fh, 4);
+        if ($entry === false || strlen($entry) < 4) {
+            return false;
+        }
+        $offset = (ord($entry[0]) << 16) | (ord($entry[1]) << 8) | ord($entry[2]);
+
+        return $offset >= 2;
     }
 
     /** @return array{0:int,1:string} */
@@ -183,10 +225,48 @@ final class AnvilWorld
         }
 
         try {
-            return Nbt::parse($raw);
+            $root = Nbt::parse($raw);
         } catch (\Throwable) {
             return null;
         }
+        $this->migrateLegacyMeta($root, $cx, $cz);
+
+        return $root;
+    }
+
+    /**
+     * 旧版生成器把 Data / SkyLight / BlockLight 的 nibble 顺序写反了
+     * （偶数索引写到了高 4 位）。这里按 chunk 整体交换回来，并打上新标记。
+     * 原版区块的 LastUpdate 是游戏刻（通常很小），旧生成器用的是 Unix 时间戳，
+     * 用 level.dat 的 LastPlayed 做阈值，避免误伤原版区块。
+     */
+    private function migrateLegacyMeta(Tag $root, int $cx, int $cz): void
+    {
+        $level = Nbt::child($root, 'Level');
+        if ($level === null || Nbt::child($level, 'phpMcGenerated') !== null) {
+            return;
+        }
+        if (Nbt::int($level, 'LastUpdate') <= $this->migrationCutoff) {
+            return;
+        }
+
+        foreach (Nbt::listItems($level, 'Sections') as $sec) {
+            foreach (['Data', 'SkyLight', 'BlockLight'] as $name) {
+                $arr = Nbt::bytes($sec, $name);
+                if ($arr === null || strlen($arr) !== 2048) {
+                    continue;
+                }
+                $out = '';
+                for ($i = 0; $i < 2048; $i++) {
+                    $b = ord($arr[$i]);
+                    $out .= chr((($b & 0x0F) << 4) | ($b >> 4));
+                }
+                $sec->value[$name] = Tag::byteArray($out);
+            }
+        }
+        $level->value['phpMcGenerated'] = Tag::byte(1);
+        $this->migrated[$cx . ',' . $cz] = true;
+        error_log("[phpmcs] 迁移旧生成区块 {$cx},{$cz} 的 meta/光照");
     }
 
     // ---------------- 存盘 ----------------
@@ -487,8 +567,9 @@ final class AnvilWorld
             'Data' => Tag::compound([
                 'version' => Tag::int(19133),
                 'LevelName' => Tag::str('PHP World'),
-                'generatorName' => Tag::str('flat'),
-                'generatorVersion' => Tag::int(0),
+                'generatorName' => Tag::str('default'),
+                'generatorVersion' => Tag::int(1),
+                'RandomSeed' => Tag::long(random_int(-2147483647, 2147483647)),
                 'GameType' => Tag::int(1),
                 'Difficulty' => Tag::byte(0),
                 'DifficultyLocked' => Tag::byte(0),
@@ -507,38 +588,6 @@ final class AnvilWorld
                 'thundering' => Tag::byte(0),
                 'thunderTime' => Tag::int(0),
                 'clearWeatherTime' => Tag::int(0),
-            ]),
-        ]);
-    }
-
-    private static function flatChunk(int $cx, int $cz): Tag
-    {
-        $blocks = '';
-        for ($y = 0; $y < 16; $y++) {
-            $id = [0 => 7, 1 => 3, 2 => 3, 3 => 2][$y] ?? 0;
-            $blocks .= str_repeat(chr($id), 256);
-        }
-
-        $section = Tag::compound([
-            'Y' => Tag::byte(0),
-            'Blocks' => Tag::byteArray($blocks),
-            'Data' => Tag::byteArray(str_repeat("\x00", 2048)),
-            'BlockLight' => Tag::byteArray(str_repeat("\x00", 2048)),
-            'SkyLight' => Tag::byteArray(str_repeat("\xff", 2048)),
-        ]);
-
-        return Tag::compound([
-            'Level' => Tag::compound([
-                'xPos' => Tag::int($cx),
-                'zPos' => Tag::int($cz),
-                'LastUpdate' => Tag::long(0),
-                'TerrainPopulated' => Tag::byte(1),
-                'InhabitedTime' => Tag::long(0),
-                'Biomes' => Tag::byteArray(str_repeat("\x01", 256)),
-                'HeightMap' => Tag::intArray(array_fill(0, 256, 4)),
-                'Sections' => Tag::list(Tag::COMPOUND, [$section]),
-                'Entities' => Tag::list(Tag::COMPOUND, []),
-                'TileEntities' => Tag::list(Tag::COMPOUND, []),
             ]),
         ]);
     }
