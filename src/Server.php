@@ -38,6 +38,8 @@ final class Connection
     public bool $hintedCreativeDrop = false;
     /** 上次自然回血的时间 */
     public float $lastRegen = 0.0;
+    /** 疲劳值：攒够 4.0 掉 1 点饱食度 */
+    public float $exhaustion = 0.0;
     public int $gamemode = 1;
     public bool $flying = false;
     /** 手上拿的是快捷栏第几格（0-8），客户端切物品时会告诉我们 */
@@ -646,14 +648,22 @@ final class Server
                     || ($c->gamemode !== 1 && ($status === 2 || $instant))) {
                     if ($state === 0) {
                         // 客户端以为这里有方块，服务端这边是空气。
-                        // 直接把这个「空气」打回去，客户端收到就会把幽灵方块擦掉，
-                        // 不用等玩家再放一个方块来触发区块更新。
+                        // 直接把这个「空气」打回去，客户端收到就会把幽灵方块擦掉。
                         $c->send(self::C_BLOCK_CHANGE, (new Writer())
                             ->long($this->packPosition($x, $y, $z))
                             ->varInt(0));
                     } else {
                         $this->breakBlock($c, $x, $y, $z);
                     }
+
+                    // 不管碎没碎，都把「服务端认为这块是什么」打回去。
+                    // 这样客户端要是画错了（比如它显示枯木、服务端其实是高草），
+                    // 下一眼就会看到真身，而不是一直显示幽灵。
+                    $now2 = $this->world->chunk($x >> 4, $z >> 4)
+                        ->blockState($x & 15, $y, $z & 15);
+                    $c->send(self::C_BLOCK_CHANGE, (new Writer())
+                        ->long($this->packPosition($x, $y, $z))
+                        ->varInt($now2));
                 }
                 break;
 
@@ -858,6 +868,15 @@ final class Server
                     $this->closeChest($p);
                 }
             }
+        }
+
+        // 消耗：每挖一块攒 0.005 疲劳，攒够 4.0 掉 1 点饱食度（原版数值）
+        $c->exhaustion += 0.005;
+        while ($c->exhaustion >= 4.0 && $c->food > 0) {
+            $c->exhaustion -= 4.0;
+            $c->food--;
+            $c->send(self::C_UPDATE_HEALTH, (new Writer())
+                ->float($c->health)->varInt($c->food)->float(0.0));
         }
 
         if (!$chunk->setBlock($x & 15, $y, $z & 15, 0, 0)) {
