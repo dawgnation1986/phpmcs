@@ -780,6 +780,26 @@ final class Server
         if ($id === 7) {
             return; // 基岩挖不动
         }
+
+        if ($id === 54) {
+            // 原版 BlockChest.breakBlock：内容全掉出来，再删掉 TileEntity。
+            // 只把方块变空气、不处理内容，就会「打掉不掉东西」，
+            // 而且数据还留着 —— 再放个箱子旧东西又回来了。
+            foreach ($this->chests->load($x, $y, $z) as $item) {
+                if ($item !== null && $item['count'] > 0) {
+                    $this->spawnDrop($x, $y, $z, $item['id'], $item['count'], $item['damage'], $c);
+                }
+            }
+            $this->chests->remove($x, $y, $z);
+            foreach ($this->players() as $p) {
+                if ($p->chest !== null
+                    && $p->chest['x'] === $x && $p->chest['y'] === $y && $p->chest['z'] === $z) {
+                    $p->chest['slots'] = array_fill(0, 27, null);
+                    $this->closeChest($p);
+                }
+            }
+        }
+
         if (!$chunk->setBlock($x & 15, $y, $z & 15, 0, 0)) {
             return;
         }

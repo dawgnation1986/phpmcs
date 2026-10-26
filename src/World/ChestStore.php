@@ -49,6 +49,17 @@ final class ChestStore
         return $out;
     }
 
+    /** 箱子被打掉时清掉记录（原版会 removeTileEntity） */
+    public function remove(int $x, int $y, int $z): void
+    {
+        $key = $x . ',' . $y . ',' . $z;
+        if (!isset($this->data[$key])) {
+            return;
+        }
+        unset($this->data[$key]);
+        @file_put_contents($this->file, json_encode($this->data), LOCK_EX);
+    }
+
     /** @param array<int, array{id:int,count:int,damage:int}|null> $slots */
     public function save(int $x, int $y, int $z, array $slots): void
     {
