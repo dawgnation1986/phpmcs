@@ -420,6 +420,30 @@ final class AnvilWorld
         return $out;
     }
 
+    /** @return array{food:int,hp:float} 上次下线的饱食度和血量 */
+    public function vitals(string $name): array
+    {
+        $v = $this->playerPositions()[strtolower($name)] ?? [];
+
+        return [
+            'food' => isset($v['food']) ? max(0, min(20, (int) $v['food'])) : 20,
+            'hp' => isset($v['hp']) ? max(0.0, min(20.0, (float) $v['hp'])) : 20.0,
+        ];
+    }
+
+    public function rememberVitals(string $name, int $food, float $health): void
+    {
+        $key = strtolower($name);
+        $pos = $this->playerPositions();
+        $pos[$key] = array_merge($pos[$key] ?? [], ['food' => $food, 'hp' => round($health, 1)]);
+        $this->playerPos = $pos;
+        @file_put_contents(
+            $this->posFile(),
+            json_encode($pos, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT),
+            LOCK_EX
+        );
+    }
+
     /** 上次的游戏模式（创造/生存）。没有记录就返回 null。 */
     public function playerGamemode(string $name): ?int
     {

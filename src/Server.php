@@ -345,6 +345,11 @@ final class Server
         // 用上次的模式，没有记录才用世界默认（/gm 换过之后重进保持）
         $c->gamemode = $this->world->playerGamemode($c->username) ?? $this->gamemode;
 
+        // 饱食度和血量也要接着上次（不然重进永远满血满饱食度）
+        $vitals = $this->world->vitals($c->username);
+        $c->food = $vitals['food'];
+        $c->health = $vitals['hp'];
+
         // 皮肤：只有拿着带签名的 textures 属性，别人的客户端才认
         $t0 = microtime(true);
         $c->textures = $this->skins->of($c->username);
@@ -388,8 +393,7 @@ final class Server
         // 3) 能力：不发这个，创造模式等于没开（不能飞、不是无敌）
         $this->sendAbilities($c);
 
-        // 血量（不发病客户端默认满血，但要让它知道是服务端在管）
-        $c->health = 20.0;
+        // 血量：用上面读到的存档值，不再强制满血
         $this->sendHealth($c);
 
         // 上一次位置要先设成出生点，否则第一段移动会被算成「从 0,0,0 跑过来」，
@@ -1751,7 +1755,8 @@ final class Server
             }
             $state = $this->world->chunk($bx >> 4, $bz >> 4)
                 ->blockState($bx & 15, $by, $bz & 15);
-            if ($state !== 0) {
+            // 注意只看 id：空气的 meta 也可能非 0（state=1），不能当成方块
+            if (($state >> 4) !== 0) {
                 return [$bx, $by, $bz, $state >> 4, $state & 15];
             }
         }
@@ -1992,6 +1997,7 @@ final class Server
                 $c->chest = null;
             }
             $this->log("  存背包 " . count($c->inventory) . ' 格');
+            $this->world->rememberVitals($c->username, $c->food, $c->health);
             $this->world->rememberGamemode($c->username, $c->gamemode);
             $this->world->rememberInventory($c->username, $c->inventory);
             $this->world->rememberPosition(
