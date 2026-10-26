@@ -334,7 +334,8 @@ final class Server
         $c->uuid = self::offlineUuid($c->username);
         $c->entityId = $this->nextEntityId++;
         $c->state = Connection::STATE_PLAY;
-        $c->gamemode = $this->gamemode;
+        // 用上次的模式，没有记录才用世界默认（/gm 换过之后重进保持）
+        $c->gamemode = $this->world->playerGamemode($c->username) ?? $this->gamemode;
 
         // 皮肤：只有拿着带签名的 textures 属性，别人的客户端才认
         $t0 = microtime(true);
@@ -726,6 +727,8 @@ final class Server
                 $cursor = $this->readSlotItem($r);
                 if ($windowId === 0 && $mode === 4) {
                     $this->dropFromSlot($c, $slot, $button === 1);
+                } elseif ($windowId === 0) {
+                    $this->clickInventory($c, $slot, $button, $mode, $cursor);
                 } elseif ($windowId === 1) {
                     $this->clickChest($c, $slot, $button, $mode, $cursor);
                 }
@@ -768,6 +771,14 @@ final class Server
         if (!$chunk->setBlock($x & 15, $y, $z & 15, $id, $meta)) {
             return;
         }
+
+        // 双生花是两格高：放下半格时自动补上半格，跟原版一样
+        if ($id === 175 && ($meta & 0x8) === 0 && $y < 255) {
+            if ($chunk->setBlock($x & 15, $y + 1, $z & 15, 175, $meta | 0x8)) {
+                $this->broadcastBlockChange($x, $y + 1, $z, (175 << 4) | ($meta | 0x8));
+            }
+        }
+
         $this->broadcastBlockChange($x, $y, $z, (($id & 0xFF) << 4) | ($meta & 0x0F));
         $this->markSection($x, $y, $z);
     }
@@ -797,6 +808,25 @@ final class Server
         $meta = $state & 0x0F;
         if ($id === 7) {
             return; // 基岩挖不动
+        }
+
+        if ($id === 175) {
+            // 双生花是两格高：meta 0-7 是下半，8-15 是上半。
+            // 打任意一半都要把另一半一起清掉，否则会剩半截悬空。
+            $lower = ($meta & 0x8) !== 0 ? $y - 1 : $y;
+            $upper = $lower + 1;
+            foreach ([$lower, $upper] as $yy) {
+                if ($chunk->blockState($x & 15, $yy, $z & 15) >> 4 === 175) {
+                    $chunk->setBlock($x & 15, $yy, $z & 15, 0, 0);
+                    $this->broadcastBlockChange($x, $yy, $z, 0);
+                }
+            }
+            [$dropId, $count] = [175, 1];
+            if ($c->gamemode !== 1) {
+                $this->spawnDrop($x, $lower, $z, $dropId, $count, $meta & 0x7, $c);
+            }
+
+            return;
         }
 
         if ($id === 54) {
@@ -1050,7 +1080,12 @@ final class Server
     private static function dropOf(int $id, int $meta): array
     {
         // 概率类的先处理
-        if ($id === 18 || $id === 161) {          // 树叶：5% 掉树苗
+        if ($id === 18 || $id === 161) {
+            // 原版：5% 树苗，0.5% 苹果（只有橡树叶掉苹果）
+            if ($id === 18 && mt_rand(1, 200) === 1) {
+                return [260, 1];
+            }
+
             return mt_rand(1, 20) === 1 ? [6, 1] : [0, 0];
         }
         if ($id === 31) {                          // 高草：12.5% 掉小麦种子
@@ -1560,6 +1595,61 @@ final class Server
             ->float(5.0));
     }
 
+    /**
+     * 玩家自己背包里的点击（windowId 0）。
+     * 不处理这个，客户端在背包里拖动物品只是本地动，服务端那份不变，
+     * 重进时推回旧数据 —— 玩家看到的就是「东西自己跳回快捷栏」。
+     */
+    private function clickInventory(Connection $c, int $slot, int $button, int $mode, ?array $cursor): void
+    {
+        if ($slot < 9 || $slot > 44) {
+            return;   // 合成格、盔甲格先不管
+        }
+
+        $cur = $c->inventory[$slot] ?? null;
+        $next = $cur;
+
+        if ($mode === 0 && $button === 0) {
+            $next = $cursor;
+        } elseif ($mode === 0 && $button === 1 && $cursor === null && $cur !== null) {
+            $half = (int) ceil($cur['count'] / 2);
+            $rest = $cur['count'] - $half;
+            $next = $rest > 0 ? ['id' => $cur['id'], 'count' => $rest, 'damage' => $cur['damage']] : null;
+        } elseif ($mode === 0 && $button === 1 && $cursor !== null && $cur === null) {
+            $next = ['id' => $cursor['id'], 'count' => 1, 'damage' => $cursor['damage']];
+        } elseif ($mode === 0 && $button === 1 && $cursor !== null && $cur !== null
+            && $cur['id'] === $cursor['id'] && $cur['damage'] === $cursor['damage'] && $cur['count'] < 64) {
+            $next = ['id' => $cur['id'], 'count' => $cur['count'] + 1, 'damage' => $cur['damage']];
+        } elseif ($mode === 1 && $cur !== null) {
+            // Shift：在快捷栏(36-44)和主区(9-35)之间搬
+            $range = $slot >= 36 ? [9, 35] : [36, 44];
+            for ($i = $range[0]; $i <= $range[1]; $i++) {
+                if (($c->inventory[$i] ?? null) === null) {
+                    $c->inventory[$i] = $cur;
+                    unset($c->inventory[$slot]);
+                    $c->send(self::C_SET_SLOT, (new Writer())
+                        ->byte(0)->short($i)->raw($this->slotBytes($cur)));
+                    $c->send(self::C_SET_SLOT, (new Writer())
+                        ->byte(0)->short($slot)->raw($this->slotBytes(null)));
+
+                    return;
+                }
+            }
+
+            return;
+        } else {
+            return;
+        }
+
+        if ($next === null) {
+            unset($c->inventory[$slot]);
+        } else {
+            $c->inventory[$slot] = $next;
+        }
+        $c->send(self::C_SET_SLOT, (new Writer())
+            ->byte(0)->short($slot)->raw($this->slotBytes($next)));
+    }
+
     /** 把 45 格背包推给客户端（windowId 0 = 玩家自己的背包） */
     private function sendPlayerInventory(Connection $c): void
     {
@@ -1719,6 +1809,7 @@ final class Server
                 $c->chest = null;
             }
             $this->log("  存背包 " . count($c->inventory) . ' 格');
+            $this->world->rememberGamemode($c->username, $c->gamemode);
             $this->world->rememberInventory($c->username, $c->inventory);
             $this->world->rememberPosition(
                 $c->username,

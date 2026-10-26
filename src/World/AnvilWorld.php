@@ -420,6 +420,27 @@ final class AnvilWorld
         return $out;
     }
 
+    /** 上次的游戏模式（创造/生存）。没有记录就返回 null。 */
+    public function playerGamemode(string $name): ?int
+    {
+        $gm = $this->playerPositions()[strtolower($name)]['gm'] ?? null;
+
+        return is_int($gm) ? $gm : (is_numeric($gm) ? (int) $gm : null);
+    }
+
+    public function rememberGamemode(string $name, int $gamemode): void
+    {
+        $key = strtolower($name);
+        $pos = $this->playerPositions();
+        $pos[$key] = array_merge($pos[$key] ?? [], ['gm' => $gamemode]);
+        $this->playerPos = $pos;
+        @file_put_contents(
+            $this->posFile(),
+            json_encode($pos, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT),
+            LOCK_EX
+        );
+    }
+
     /** @param array<int, array{id:int,count:int,damage:int}> $inv */
     public function rememberInventory(string $name, array $inv): void
     {
