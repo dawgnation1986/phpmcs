@@ -36,6 +36,8 @@ final class Connection
     public float $resendInvAt = 0.0;
     /** 创造模式第一次挖方块时提示一次「不掉落」，别每次都刷 */
     public bool $hintedCreativeDrop = false;
+    /** 上次自然回血的时间 */
+    public float $lastRegen = 0.0;
     public int $gamemode = 1;
     public bool $flying = false;
     /** 手上拿的是快捷栏第几格（0-8），客户端切物品时会告诉我们 */
@@ -658,6 +660,16 @@ final class Server
             case 0x08: // 放方块 / 使用方块
                 [$x, $y, $z] = $this->unpackPosition($r->readLong());
                 $face = $r->readUnsignedByte();
+
+                // 坐标 (-1,-1) 表示「使用了手上的物品」（吃东西、喝药），
+                // 不是对着方块操作。1.8 里吃食物就走这个包。
+                if ($x === -1 && $z === -1) {
+                    $useId = $r->readShort();
+                    if ($useId > 0) {
+                        $this->useItem($c, $useId);
+                    }
+                    break;
+                }
 
                 // 先看点到的是什么：箱子这类是「使用」，不是「放置」。
                 // 必须放在「手上是不是方块」判断之前 —— 空手右键箱子时
@@ -1587,6 +1599,54 @@ final class Server
 
     // ---------------- 杂项 ----------------
 
+    /** 食物 id => 恢复的饱食度（1.8 的常见食物） */
+    private const FOOD = [
+        260 => 4,   // 苹果
+        297 => 5,   // 面包
+        322 => 4,   // 金苹果
+        349 => 2,   // 生鱼
+        350 => 5,   // 熟鱼
+        360 => 2,   // 西瓜片
+        363 => 8,   // 牛排
+        364 => 8,   // 熟猪排
+        365 => 4,   // 生鸡肉
+        366 => 6,   // 熟鸡肉
+        391 => 2,   // 胡萝卜
+        392 => 6,   // 烤马铃薯
+        393 => 2,   // 马铃薯
+        400 => 8,   // 南瓜派
+    ];
+
+    /** 右键食物：吃掉一个、回饱食度和血。 */
+    private function useItem(Connection $c, int $itemId): void
+    {
+        $food = self::FOOD[$itemId] ?? 0;
+        if ($food <= 0) {
+            return;
+        }
+
+        $slot = 36 + $c->heldSlot;
+        $it = $c->inventory[$slot] ?? null;
+        if ($it === null || $it['id'] !== $itemId) {
+            return;
+        }
+
+        if ($it['count'] > 1) {
+            $it['count']--;
+            $c->inventory[$slot] = $it;
+            $this->sendSlot($c, $slot, $it);
+        } else {
+            unset($c->inventory[$slot]);
+            $c->send(self::C_SET_SLOT, (new Writer())->byte(0)->short($slot)->short(-1));
+        }
+
+        $c->food = min(20, $c->food + $food);
+        $c->health = min(20.0, $c->health + 1.0);
+        $c->send(self::C_UPDATE_HEALTH, (new Writer())
+            ->float($c->health)->varInt($c->food)->float(5.0));
+        $this->log("  {$c->username} 吃了方块{$itemId}，饱食度 {$c->food}，血 {$c->health}");
+    }
+
     private function sendHealth(Connection $c): void
     {
         $c->send(self::C_UPDATE_HEALTH, (new Writer())
@@ -1763,6 +1823,17 @@ final class Server
         }
 
         $this->processDrops();
+
+        // 自然回血：生存、饱食度 >= 18、没满血，每 4 秒回 1 点
+        foreach ($this->players() as $p) {
+            if ($p->gamemode !== 1 && $p->food >= 18 && $p->health > 0 && $p->health < 20
+                && $now - $p->lastRegen > 4.0) {
+                $p->lastRegen = $now;
+                $p->health = min(20.0, $p->health + 1.0);
+                $p->send(self::C_UPDATE_HEALTH, (new Writer())
+                    ->float($p->health)->varInt($p->food)->float(5.0));
+            }
+        }
 
         foreach ($this->players() as $p) {
             if ($p->chunkQueue !== []) {
