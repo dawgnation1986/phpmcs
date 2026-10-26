@@ -30,6 +30,18 @@ if (isset($argv[1]) && $argv[1] !== '') {
 $motd = $argv[2] ?? 'PHP 写的 1.8.9 服务器';
 $worldDir = $argv[3] ?? (__DIR__ . '/../world');
 
+// 单实例守卫。
+// Windows 的 SO_REUSEADDR 允许多个进程绑同一端口，后起的那个不报错，
+// 于是「重启了但玩家连到的还是旧进程」——改的代码看起来完全没生效。
+// 这里先探一下端口，有人占着就直接退出，别制造第二个幽灵。
+$probe = @fsockopen('127.0.0.1', $port, $errno, $errstr, 0.3);
+if ($probe !== false) {
+    fclose($probe);
+    fwrite(STDERR, "端口 {$port} 已经被另一个进程占着了。\n");
+    fwrite(STDERR, "先把它关掉（netstat -ano | findstr :{$port} 看 PID），再来一遍。\n");
+    exit(1);
+}
+
 $world = new PhpMc\World\AnvilWorld($worldDir);
 
 // 皮肤白名单：游戏内名字 => 要查的正版名。离线号不要往里加，
