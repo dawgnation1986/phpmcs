@@ -37,7 +37,8 @@ final class Connection
 
     /** 区块发完之后要二次补发的箱子坐标（见 sendChunkTo 的注释） */
     public array $chestFix = [];
-    public float $chestFixAt = 0.0;
+    /** 补发时间点（秒），每次到点发一轮，直到用完 */
+    public array $chestFixTimes = [];
     /** @var array{id:int,count:int,damage:int}|null 服务端记录的光标物品 */
     public ?array $cursor = null;
     /** @var array<int,array{id:int,count:int,damage:int}|null> 玩家 2x2 合成格 */
@@ -536,7 +537,10 @@ final class Server
             $c->chestFix[] = [$x, $y, $z];
         }
         if ($c->chestFix !== []) {
-            $c->chestFixAt = microtime(true) + 1.2;
+            // 分四轮补：客户端区块是一批批加载的，只发一次的话，
+            // 发的那一刻目标区块可能还没加载完（world.e(pos)=false），包被丢掉。
+            $now2 = microtime(true);
+            $c->chestFixTimes = [$now2 + 1.0, $now2 + 2.5, $now2 + 5.0, $now2 + 9.0];
         }
     }
 
@@ -2820,9 +2824,10 @@ final class Server
         // 箱子补刀：进服 1.2 秒后，把之前记下的箱子重新发一遍
         // （空气 -> 方块 -> 0x35），压过区块数据。
         foreach ($this->players() as $p) {
-            if ($p->chestFix === [] || $p->chestFixAt <= 0 || $now < $p->chestFixAt) {
+            if ($p->chestFix === [] || $p->chestFixTimes === [] || $now < $p->chestFixTimes[0]) {
                 continue;
             }
+            array_shift($p->chestFixTimes);
             $fixed = 0;
             foreach ($p->chestFix as [$fx, $fy, $fz]) {
                 $st = $this->world->chunk($fx >> 4, $fz >> 4)->blockState($fx & 15, $fy, $fz & 15);
@@ -2835,10 +2840,11 @@ final class Server
                 $this->sendTileEntity($p, $fx, $fy, $fz);
                 $fixed++;
             }
-            $p->chestFix = [];
-            $p->chestFixAt = 0.0;
+            if ($p->chestFixTimes === []) {
+                $p->chestFix = [];
+            }
             if ($fixed > 0) {
-                $this->log("  补发箱子 {$fixed} 个 -> {$p->username}");
+                $this->log("  补发箱子 {$fixed} 个 -> {$p->username}（剩 " . count($p->chestFixTimes) . ' 轮）');
             }
         }
 
