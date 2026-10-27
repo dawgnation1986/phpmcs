@@ -551,8 +551,8 @@ final class Server
             // 每 2 秒喂一轮，共 15 轮（30 秒）。客户端什么时候把区块真正加载好，
             // 下一轮就能把 TE 建出来；建好后多余的轮次是无害的空转。
             $c->chestSectionTimes = [];
-            for ($i = 1; $i <= 15; $i++) {
-                $c->chestSectionTimes[] = $now + 2.0 * $i;
+            for ($i = 0; $i < 15; $i++) {
+                $c->chestSectionTimes[] = $now + 0.4 + 1.5 * $i;
             }
         }
     }
@@ -2881,7 +2881,16 @@ final class Server
                     if (($by >> 4) !== $sy) {
                         continue;
                     }
-                    $this->sendTileEntity($p, $bx, $by, $bz);
+                    // B 方案：客户端建不出 TileEntityChest，箱子方块本身是
+                    // 「透明」的（没有 TE 就没有模型）。与其让它看不见，
+                    // 不如在客户端把这一格画成工作台（58）——能看见、能找回来。
+                    //
+                    // 服务端的方块数据仍然保留是箱子（54），右键时我们查的是
+                    // 自己的世界数据，所以照样会打开真箱子、内容一点不少。
+                    $pos = $this->packPositionBytes($bx, $by, $bz);
+                    $p->send(self::C_BLOCK_CHANGE, (new Writer())
+                        ->raw($pos)
+                        ->varInt((35 << 4) | 12));   // 35:12 棕色羊毛，不需要 TE，一定画得出来
                     $sent++;
                 }
             }
