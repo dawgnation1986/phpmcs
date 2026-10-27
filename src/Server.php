@@ -45,6 +45,8 @@ final class Connection
     public int $chestFixRound = 0;
     /** 是否已经提示过「书架其实是箱子」 */
     public bool $chestHinted = false;
+    /** 当前打开的熔炉坐标 */
+    public ?array $furnace = null;
     /** @var array<int,array{id:int,count:int,damage:int}|null> 玩家 2x2 合成格 */
     public array $craftGrid = [null, null, null, null];
     /** @var array<int,array{id:int,count:int,damage:int}|null> 工作台 3x3 合成格 */
@@ -132,6 +134,7 @@ final class Server
     use ChestTrait;
     use CraftingTrait;
     use MobTrait;
+    use FurnaceTrait;
 
     public const PROTOCOL = 47;
 
@@ -805,6 +808,10 @@ final class Server
                     $this->openChest($c, $x, $y, $z);
                     break;
                 }
+                if ($hitId === 98 && $this->hasFurnace($x, $y, $z)) {
+                    $this->openFurnace($c, $x, $y, $z);
+                    break;
+                }
                 if ($hitId === 58) {
                     $this->openWorkbench($c);
                     break;
@@ -869,7 +876,11 @@ final class Server
                 // 箱子(54)不再真的放进世界：客户端把它设成 BlockContainer 方块
                 // 会在 1.8.9 上抛 NPE，方块状态永远落不了地。
                 // 改成放书架(47) + 在 ChestStore 里留一条记录，右键照样开箱。
-                if ($blockId === 54) {
+                if ($blockId === 61) {
+                    $this->changeBlock($tx, $ty, $tz, 98, 0);
+                    $this->ensureFurnace($tx, $ty, $tz);
+                    $blockId = 98;
+                } elseif ($blockId === 54) {
                     $this->changeBlock($tx, $ty, $tz, 47, 0);
                     $this->chests->ensure($tx, $ty, $tz);
                     $blockId = 47;
@@ -977,6 +988,8 @@ final class Server
                     }
                 } elseif ($windowId === 0) {
                     $this->clickInventory($c, $slot, $button, $mode, $cursor);
+                } elseif ($windowId === 3) {
+                    $this->clickFurnace($c, $slot, $button, $mode, $cursor);
                 } elseif ($windowId === 1) {
                     $this->clickChest($c, $slot, $button, $mode, $cursor);
                 }
@@ -993,7 +1006,9 @@ final class Server
             case 0x0D: // Close Window
                 $windowId = $r->readByte();
                 $this->resetDrag($c);
-                if ($windowId === 2) {
+                if ($windowId === 3) {
+                    $this->closeFurnace($c);
+                } elseif ($windowId === 2) {
                     $this->closeWorkbench($c);
                 } else {
                     $this->closeChest($c);
@@ -3071,6 +3086,7 @@ final class Server
         }
 
         $this->processDrops();
+        $this->tickFurnaces($now);
         $this->tickMobs($now);
 
         // 每秒同步一次时间，客户端天空才会真的昼→夜
