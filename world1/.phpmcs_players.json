@@ -1,0 +1,348 @@
+{
+    "dropper": {
+        "x": 0.5,
+        "y": 4,
+        "z": 0.5,
+        "yaw": 0,
+        "pitch": 0,
+        "inv": {
+            "36": {
+                "id": 4,
+                "count": 10,
+                "damage": 0
+            }
+        },
+        "gm": 0
+    },
+    "postest": {
+        "x": 10.5,
+        "y": 4,
+        "z": 10.5,
+        "yaw": 90,
+        "pitch": 0
+    },
+    "steve": {
+        "x": 0.5,
+        "y": 4,
+        "z": 0.5,
+        "yaw": 0,
+        "pitch": 0,
+        "inv": [],
+        "gm": 1,
+        "food": 20,
+        "hp": 20
+    },
+    "alex": {
+        "x": 45.5,
+        "y": 4,
+        "z": 0.5,
+        "yaw": 90,
+        "pitch": 0,
+        "inv": [],
+        "gm": 1,
+        "food": 20,
+        "hp": 20
+    },
+    "digger": {
+        "x": 0.5,
+        "y": 4,
+        "z": 0.5,
+        "yaw": 0,
+        "pitch": 0,
+        "inv": {
+            "36": {
+                "id": 1,
+                "count": 64,
+                "damage": 0
+            }
+        },
+        "gm": 0
+    },
+    "actor": {
+        "x": 0.5,
+        "y": 4,
+        "z": 0.5,
+        "yaw": 0,
+        "pitch": 0,
+        "inv": [],
+        "gm": 1
+    },
+    "watcher": {
+        "x": 0.5,
+        "y": 4,
+        "z": 0.5,
+        "yaw": 0,
+        "pitch": 0,
+        "inv": [],
+        "gm": 1
+    },
+    "walker": {
+        "x": 40.5,
+        "y": 4,
+        "z": 40.5,
+        "yaw": 0,
+        "pitch": 0
+    },
+    "reloader": {
+        "x": 0.5,
+        "y": 4,
+        "z": 0.5,
+        "yaw": 0,
+        "pitch": 0
+    },
+    "thrower": {
+        "x": 0.5,
+        "y": 4,
+        "z": 0.781,
+        "yaw": 0,
+        "pitch": 0
+    },
+    "thrower2": {
+        "x": 0.5,
+        "y": 4,
+        "z": 3,
+        "yaw": 0,
+        "pitch": 0
+    },
+    "logtest": {
+        "x": 0.5,
+        "y": 4,
+        "z": 0.5,
+        "yaw": 0,
+        "pitch": 0
+    },
+    "falltest": {
+        "x": 0.5,
+        "y": 4,
+        "z": 0.5,
+        "yaw": 0,
+        "pitch": 0
+    },
+    "hexprobe": {
+        "x": 0.5,
+        "y": 4,
+        "z": 0.5,
+        "yaw": 0,
+        "pitch": 0
+    },
+    "faller": {
+        "x": 0.5,
+        "y": 4,
+        "z": 0.5,
+        "yaw": 0,
+        "pitch": 0
+    },
+    "faller2": {
+        "x": 0.5,
+        "y": 4,
+        "z": 0.5,
+        "yaw": 0,
+        "pitch": 0
+    },
+    "chesttester": {
+        "x": 0.5,
+        "y": 4,
+        "z": 0.5,
+        "yaw": 0,
+        "pitch": 0,
+        "inv": [],
+        "gm": 1,
+        "food": 20,
+        "hp": 20
+    },
+    "invtest": {
+        "inv": {
+            "36": {
+                "id": 4,
+                "count": 7,
+                "damage": 0
+            }
+        },
+        "x": 0.5,
+        "y": 4,
+        "z": 0.5,
+        "yaw": 0,
+        "pitch": 0
+    },
+    "chestpersist": {
+        "inv": [],
+        "x": 0.5,
+        "y": 4,
+        "z": 0.5,
+        "yaw": 0,
+        "pitch": 0
+    },
+    "chestbreak": {
+        "inv": [],
+        "x": 0.5,
+        "y": 4,
+        "z": 0.5,
+        "yaw": 0,
+        "pitch": 0
+    },
+    "dropleaver": {
+        "inv": [],
+        "x": 0.5,
+        "y": 4,
+        "z": 0.5,
+        "yaw": 0,
+        "pitch": 0
+    },
+    "dropwatcher": {
+        "inv": [],
+        "x": 0.5,
+        "y": 4,
+        "z": 0.5,
+        "yaw": 0,
+        "pitch": 0
+    },
+    "flowertest": {
+        "inv": [],
+        "x": 0.5,
+        "y": 4,
+        "z": 0.5,
+        "yaw": 0,
+        "pitch": 0
+    },
+    "flowertest2": {
+        "inv": [],
+        "x": 0.5,
+        "y": 4,
+        "z": 0.5,
+        "yaw": 0,
+        "pitch": 0
+    },
+    "instanttest": {
+        "inv": [],
+        "x": 0.5,
+        "y": 4,
+        "z": 0.5,
+        "yaw": 0,
+        "pitch": 0
+    },
+    "tabletest": {
+        "inv": [],
+        "x": 0.5,
+        "y": 4,
+        "z": 0.5,
+        "yaw": 0,
+        "pitch": 0
+    },
+    "dbltest": {
+        "gm": 0,
+        "inv": {
+            "9": {
+                "id": 1,
+                "count": 3,
+                "damage": 0
+            }
+        },
+        "x": 50.5,
+        "y": 4,
+        "z": 52.5,
+        "yaw": 0,
+        "pitch": 0
+    },
+    "eattest": {
+        "gm": 0,
+        "inv": {
+            "36": {
+                "id": 260,
+                "count": 2,
+                "damage": 0
+            }
+        },
+        "x": 0.5,
+        "y": 4,
+        "z": 0.5,
+        "yaw": 0,
+        "pitch": 0
+    },
+    "eattest2": {
+        "gm": 0,
+        "inv": {
+            "36": {
+                "id": 260,
+                "count": 1,
+                "damage": 0
+            }
+        },
+        "x": 0.5,
+        "y": 4,
+        "z": 0.5,
+        "yaw": 0,
+        "pitch": 0
+    },
+    "rain_0vo": {
+        "food": 0,
+        "hp": 14,
+        "gm": 0,
+        "inv": {
+            "36": {
+                "id": 268,
+                "count": 1,
+                "damage": 0
+            },
+            "37": {
+                "id": 270,
+                "count": 1,
+                "damage": 0
+            },
+            "38": {
+                "id": 271,
+                "count": 1,
+                "damage": 0
+            },
+            "15": {
+                "id": 280,
+                "count": 64,
+                "damage": 0
+            },
+            "13": {
+                "id": 280,
+                "count": 64,
+                "damage": 0
+            },
+            "8": {
+                "id": 313,
+                "count": 1,
+                "damage": 0
+            },
+            "5": {
+                "id": 310,
+                "count": 1,
+                "damage": 0
+            },
+            "6": {
+                "id": 311,
+                "count": 1,
+                "damage": 0
+            },
+            "7": {
+                "id": 312,
+                "count": 1,
+                "damage": 0
+            },
+            "41": {
+                "id": 17,
+                "count": 1,
+                "damage": 0
+            },
+            "39": {
+                "id": 5,
+                "count": 64,
+                "damage": 0
+            },
+            "40": {
+                "id": 5,
+                "count": 59,
+                "damage": 0
+            }
+        },
+        "x": -96.364,
+        "y": 66,
+        "z": 637.232,
+        "yaw": 18.9,
+        "pitch": 43.9
+    }
+}

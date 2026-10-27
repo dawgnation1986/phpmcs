@@ -1121,6 +1121,23 @@ final class Server
 
         $this->addExhaustion($c, 0.005);   // 挖一块 0.005（原版数值）
 
+        // 工具磨损：不扣的话服务端那份永远是满耐久，
+        // 一打开容器整窗覆盖，客户端就会「耐久忽然回满」。
+        if ($c->gamemode !== 1) {
+            $heldSlot = 36 + $c->heldSlot;
+            $held = $c->inventory[$heldSlot] ?? null;
+            if ($held !== null && isset(self::TOOL_MAX[$held['id']])) {
+                $held['damage'] = ($held['damage'] ?? 0) + 1;
+                if ($held['damage'] >= self::TOOL_MAX[$held['id']]) {
+                    unset($c->inventory[$heldSlot]);
+                    $this->sendInventorySlot($c, $heldSlot, null);
+                } else {
+                    $c->inventory[$heldSlot] = $held;
+                    $this->sendInventorySlot($c, $heldSlot, $held);
+                }
+            }
+        }
+
         if (!$chunk->setBlock($x & 15, $y, $z & 15, 0, 0)) {
             return;
         }
@@ -1399,6 +1416,20 @@ final class Server
     {
         return $id > 0 && $id <= 450 && !in_array($id, self::NO_ITEM, true);
     }
+
+    /** 工具 id => 最大耐久。挖方块时扣 1，挖穿了就消失。 */
+    private const TOOL_MAX = [
+        // 木
+        268 => 59, 269 => 59, 270 => 59, 271 => 59, 290 => 59,
+        // 石
+        272 => 131, 273 => 131, 274 => 131, 275 => 131, 291 => 131,
+        // 铁
+        256 => 250, 257 => 250, 258 => 250, 259 => 250, 292 => 250,
+        // 钻石
+        276 => 1561, 277 => 1561, 278 => 1561, 279 => 1561, 293 => 1561,
+        // 金
+        283 => 32, 284 => 32, 285 => 32, 286 => 32, 294 => 32,
+    ];
 
     private static function dropOf(int $id, int $meta): array
     {
