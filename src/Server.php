@@ -433,6 +433,19 @@ final class Server
 
         // 背包：不发这个，重连之后东西就「没了」（客户端从空背包开始）
         $c->inventory = $this->world->inventory($c->username);
+
+        // 清洗：旧版本存进去的「没有物品形态的 id」要丢掉，
+        // 否则每次进服发 Window Items 都会让客户端 NPE。
+        $removed = 0;
+        foreach ($c->inventory as $slot => $item) {
+            if (!self::hasItem($item['id'])) {
+                unset($c->inventory[$slot]);
+                $removed++;
+            }
+        }
+        if ($removed > 0) {
+            $this->log("  背包清洗：丢掉 {$removed} 个无效物品");
+        }
         $this->sendPlayerInventory($c);
         $c->resendInvAt = microtime(true) + 1.0;
 
@@ -1358,6 +1371,21 @@ final class Server
         75, 79, 90, 93, 94, 95, 96, 102, 119, 120, 122, 132, 140, 144, 149, 150, 160,
         166, 167, 176, 177];
 
+    /**
+     * 1.8 里「有方块、但没有对应 Item」的 id。
+     * 把这些 id 当物品发给客户端，Item.getItemById() 返回 null，
+     * 客户端塞进背包就 NullPointerException（日志里成片出现）。
+     */
+    private const NO_ITEM = [
+        26, 34, 36, 51, 55, 59, 63, 64, 68, 71, 75, 93, 94,
+        104, 105, 132, 143, 144, 149, 150, 193, 194, 195, 196, 197,
+    ];
+
+    private static function hasItem(int $id): bool
+    {
+        return $id > 0 && $id <= 450 && !in_array($id, self::NO_ITEM, true);
+    }
+
     private static function dropOf(int $id, int $meta): array
     {
         // 作物：方块 id 和物品 id 不同，而且要看 meta（age）决定掉什么
@@ -1407,6 +1435,10 @@ final class Server
         }
         if (isset(self::DROPS[$id])) {
             return self::DROPS[$id];
+        }
+
+        if (!self::hasItem($id)) {
+            return [0, 0];   // 没物品形态的方块，掉了也只会让客户端崩
         }
 
         return [$id, 1];     // 大多数建筑方块掉自己
@@ -1723,7 +1755,7 @@ final class Server
     ): void {
         // 兜底：id 非法或数量为 0 的物品实体，客户端拿到会渲染空栈 → NPE 崩溃
         // （报错是「实体 null 导致崩溃」）。宁可不生成，也不能让客户端炸。
-        if ($id <= 0 || $id > 450 || $count <= 0) {
+        if (!self::hasItem($id) || $count <= 0) {
             return;
         }
         $count = min(64, $count);
