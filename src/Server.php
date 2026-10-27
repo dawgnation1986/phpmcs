@@ -2119,6 +2119,10 @@ final class Server
                 //   /blocktest stone   发石头(1<<4=16)
                 //   /blocktest chest   发箱子(864) + 0x35
                 $what = strtolower($parts[0] ?? 'stone');
+                // 暂停「书架伪装」：否则 1.5 秒一轮的补发会把刚发过去的
+                // 箱子状态又刷回书架，测试结果根本看不到。
+                $c->chestSections = [];
+                $c->chestSectionTimes = [];
                 $bx2 = (int) floor($c->x + sin(deg2rad(-$c->yaw)) * 2);
                 $bz2 = (int) floor($c->z + cos(deg2rad(-$c->yaw)) * 2);
                 $by2 = (int) floor($c->y);
@@ -2134,7 +2138,7 @@ final class Server
                     $msg = "发石头 state=16";
                 }
                 $this->sendChat($c, ['text' => "{$msg} @ {$bx2},{$by2},{$bz2}——看 F3 的 Block 行", 'color' => 'aqua'], 1);
-                $this->log("  /blocktest {$what} @ {$bx2},{$by2},{$bz2} state={$st}");
+                $this->log("  /blocktest {$what} @ {$bx2},{$by2},{$bz2} state={$st}（伪装已暂停）");
                 break;
 
             case 'timeset':
