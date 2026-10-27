@@ -9,24 +9,24 @@ namespace PhpMc;
  */
 trait MobTrait
 {
-    /** 类型 => [名字, 敌对, 血量, 掉落物 id, 掉落数量] */
+    /** 类型 => [名字, 敌对, 血量, [[掉落物, 最少, 最多], ...]] */
     private const MOB_TYPES = [
-        50 => ['creeper', true, 20, 289, 1],
-        51 => ['skeleton', true, 20, 262, 2],
-        52 => ['spider', true, 16, 287, 2],
-        54 => ['zombie', true, 20, 367, 1],
-        57 => ['pigman', true, 20, 371, 1],
-        58 => ['enderman', true, 40, 368, 1],
-        65 => ['bat', false, 6, 0, 0],
-        90 => ['pig', false, 10, 319, 2],
-        91 => ['sheep', false, 8, 423, 2],
-        92 => ['cow', false, 10, 363, 2],
-        93 => ['chicken', false, 4, 365, 1],
-        95 => ['wolf', false, 8, 0, 0],
-        96 => ['mooshroom', false, 10, 334, 2],
-        98 => ['ocelot', false, 10, 0, 0],
-        100 => ['horse', false, 20, 0, 0],
-        101 => ['rabbit', false, 10, 411, 1],
+        50 => ['creeper', true, 20, [[289, 0, 2]]],                    // 火药
+        51 => ['skeleton', true, 20, [[352, 0, 2], [262, 0, 2]]],      // 骨头 + 箭
+        52 => ['spider', true, 16, [[287, 0, 2], [375, 0, 1]]],        // 线 + 蛛眼
+        54 => ['zombie', true, 20, [[367, 0, 2]]],                     // 腐肉
+        57 => ['pigman', true, 20, [[371, 0, 1], [370, 0, 1]]],        // 金粒 + 腐肉
+        58 => ['enderman', true, 40, [[368, 0, 1]]],                   // 末影珍珠
+        65 => ['bat', false, 6, []],
+        90 => ['pig', false, 10, [[319, 1, 3]]],                       // 生猪排
+        91 => ['sheep', false, 8, [[423, 1, 2], [35, 1, 1]]],          // 生羊肉 + 羊毛
+        92 => ['cow', false, 10, [[363, 1, 3], [334, 0, 2]]],          // 生牛肉 + 皮革
+        93 => ['chicken', false, 4, [[365, 1, 1], [288, 0, 2]]],       // 生鸡肉 + 羽毛
+        95 => ['wolf', false, 8, []],
+        96 => ['mooshroom', false, 10, [[363, 1, 3], [334, 0, 2]]],
+        98 => ['ocelot', false, 10, []],
+        100 => ['horse', false, 20, [[334, 0, 2]]],                    // 皮革
+        101 => ['rabbit', false, 10, [[411, 0, 1], [415, 0, 1], [414, 0, 1]]], // 兔肉/皮/脚
     ];
 
     private const BIOME_PASSIVE = [
@@ -125,10 +125,11 @@ trait MobTrait
             return true;
         }
 
-        [, , , $dropId, $dropCount] = self::MOB_TYPES[$m['type']];
+        [, , , $drops] = self::MOB_TYPES[$m['type']];
         $this->removeMob($eid);
-        if ($dropId > 0 && $dropCount > 0) {
-            for ($i = 0; $i < $dropCount; $i++) {
+        foreach ($drops as [$dropId, $dmin, $dmax]) {
+            $n = random_int($dmin, $dmax);
+            for ($i = 0; $i < $n; $i++) {
                 $this->spawnDrop((int) floor($m['x']), (int) floor($m['y']), (int) floor($m['z']), $dropId, 1, 0, $attacker);
             }
         }
