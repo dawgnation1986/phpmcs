@@ -180,9 +180,14 @@ trait FurnaceTrait
             if ($mode === 1 && $cur !== null) {          // shift：交给背包逻辑
                 $this->clickInventory($c, $inv, $button, $mode, $cursor);
             } else {
-                $c->inventory[$inv] = $cursor;
-                if ($c->inventory[$inv] === null) {
+                // 必须「交换」而不是「覆盖」：直接 $slot = cursor 会把原来那格
+                // 的东西吞掉，玩家看到的就是「东西越拿越多 / 手里凭空多一个」。
+                if ($cursor === null) {
+                    $c->cursor = $cur;
                     unset($c->inventory[$inv]);
+                } else {
+                    $c->cursor = $cur;
+                    $c->inventory[$inv] = $cursor;
                 }
             }
             $this->sendFurnaceWindow($c);
