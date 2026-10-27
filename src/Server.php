@@ -144,6 +144,7 @@ final class Server
     private const C_SPAWN_PLAYER = 0x0C;
     private const C_DESTROY_ENTITIES = 0x13;
     private const C_SPAWN_MOB = 0x0F;
+    private const C_TIME_UPDATE = 0x03;
     private const C_ENTITY_LOOK = 0x16;
     private const C_ENTITY_TELEPORT = 0x18;
     private const C_HEAD_LOOK = 0x19;
@@ -904,6 +905,11 @@ final class Server
                 $targetEid = $r->readVarInt();
                 $action = $r->readByte();
                 if ($action === 1) {          // 1 = 攻击
+                    // 先看是不是打到了生物
+                    if ($this->damageMob($targetEid, 1, $c)) {
+                        $this->addExhaustion($c, 0.3);
+                        break;
+                    }
                     foreach ($this->players() as $other) {
                         if ($other !== $c && $other->entityId === $targetEid) {
                             $this->damage($other, 1);            // 空手 1 点
@@ -2053,7 +2059,7 @@ final class Server
 
             case 'spawn':
                 // /spawn <名字或 id> [数量]
-                $parts = preg_split('/\s+/', trim($args));
+                // $parts 是 command() 上面已经切好的参数（命令名已被 shift 掉）
                 $key = strtolower($parts[0] ?? '');
                 $count = max(1, min(20, (int) ($parts[1] ?? 1)));
                 $type = 0;
@@ -2940,6 +2946,16 @@ final class Server
 
         $this->processDrops();
         $this->tickMobs($now);
+
+        // 每秒同步一次时间，客户端天空才会真的昼→夜
+        if ($now - $this->lastTimeSync >= 1.0) {
+            $this->lastTimeSync = $now;
+            foreach ($this->players() as $p) {
+                $p->send(self::C_TIME_UPDATE, (new Writer())
+                    ->long($this->world->worldAge())
+                    ->long($this->world->timeOfDay()));
+            }
+        }
 
         // 箱子段补发：进服 2 秒 / 5 秒后，把带箱子的区块段整段再发一次。
         // 只发段数据（方块+光），不发空气、不改方块；客户端收到会重建渲染区块，

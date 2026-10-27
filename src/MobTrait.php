@@ -4,101 +4,75 @@ declare(strict_types=1);
 namespace PhpMc;
 
 /**
- * 生物：按群系生成、游荡、离远了消失。
- *
- * 只做「能看见、会动、会消失」这一层——攻击/寻路/AI 还没做。
- * 生成逻辑照 1.8 的思路：白天草系群系出被动生物，夜里出敌对生物，
- * 位置在玩家周围 8~24 格，找地面高度站立。
+ * 生物：按群系生成、追人、被打、掉东西、远走消失。
+ * 移动是最朴素的「直线追」——不寻路、不绕障碍。
  */
 trait MobTrait
 {
-    /** 类型 => [名字, 是否敌对] */
+    /** 类型 => [名字, 敌对, 血量, 掉落物 id, 掉落数量] */
     private const MOB_TYPES = [
-        50 => ['creeper', true],
-        51 => ['skeleton', true],
-        52 => ['spider', true],
-        54 => ['zombie', true],
-        57 => ['pigman', true],
-        58 => ['enderman', true],
-        65 => ['bat', false],
-        90 => ['pig', false],
-        91 => ['sheep', false],
-        92 => ['cow', false],
-        93 => ['chicken', false],
-        95 => ['wolf', false],
-        96 => ['mooshroom', false],
-        98 => ['ocelot', false],
-        100 => ['horse', false],
-        101 => ['rabbit', false],
+        50 => ['creeper', true, 20, 289, 1],
+        51 => ['skeleton', true, 20, 262, 2],
+        52 => ['spider', true, 16, 287, 2],
+        54 => ['zombie', true, 20, 367, 1],
+        57 => ['pigman', true, 20, 371, 1],
+        58 => ['enderman', true, 40, 368, 1],
+        65 => ['bat', false, 6, 0, 0],
+        90 => ['pig', false, 10, 319, 2],
+        91 => ['sheep', false, 8, 35, 1],
+        92 => ['cow', false, 10, 334, 2],
+        93 => ['chicken', false, 4, 365, 1],
+        95 => ['wolf', false, 8, 0, 0],
+        96 => ['mooshroom', false, 10, 334, 2],
+        98 => ['ocelot', false, 10, 0, 0],
+        100 => ['horse', false, 20, 0, 0],
+        101 => ['rabbit', false, 10, 411, 1],
     ];
 
-    /** 群系 id => 白天能出的被动生物 */
     private const BIOME_PASSIVE = [
-        1 => [90, 91, 92, 93, 100],      // 平原
-        129 => [90, 91, 92, 93, 100],    // 向日葵平原
-        4 => [95, 91, 92, 93],           // 森林
-        27 => [95, 91, 92, 93],          // 桦木森林
-        28 => [95, 91, 92, 93],          // 黑森林
-        3 => [95, 91, 92],               // 山地
-        5 => [95, 91, 101],              // 针叶林
-        19 => [95, 91, 101],             // 冷针叶林
-        29 => [95, 91, 101],
-        30 => [95, 91, 101],             // 巨型针叶林
-        21 => [98, 93],                  // 丛林
-        23 => [98, 93],
-        22 => [98, 93],
-        32 => [100, 92],                 // 热带草原
-        33 => [100, 92],
-        14 => [96],                      // 蘑菇岛
-        2 => [101],                      // 沙漠（兔子）
-        17 => [101],
+        1 => [90, 91, 92, 93, 100], 129 => [90, 91, 92, 93, 100],
+        4 => [95, 91, 92, 93], 27 => [95, 91, 92, 93], 28 => [95, 91, 92, 93],
+        3 => [95, 91, 92], 5 => [95, 91, 101], 19 => [95, 91, 101],
+        29 => [95, 91, 101], 30 => [95, 91, 101],
+        21 => [98, 93], 23 => [98, 93], 22 => [98, 93],
+        32 => [100, 92], 33 => [100, 92], 14 => [96], 2 => [101], 17 => [101],
     ];
 
     private const MOB_HOSTILE = [54, 51, 50, 52];
 
-    /** @var array<int, array{type:int,x:float,y:float,z:float,at:float,life:float}> */
+    /** @var array<int, array{type:int,x:float,y:float,z:float,hp:int,life:float,lastHit:float}> */
     private array $mobs = [];
 
     private float $lastMobSpawn = 0.0;
     private float $lastMobTick = 0.0;
+    private float $lastTimeSync = 0.0;
 
-    /** 在某处生成一只生物，广播出去，返回实体 id（失败返回 0）。 */
     private function spawnMob(int $type, float $x, float $y, float $z): int
     {
         if (!isset(self::MOB_TYPES[$type])) {
             return 0;
         }
-
         $eid = $this->nextEntityId++;
         $this->mobs[$eid] = [
-            'type' => $type,
-            'x' => $x,
-            'y' => $y,
-            'z' => $z,
-            'at' => microtime(true),
-            'life' => 0.0,
+            'type' => $type, 'x' => $x, 'y' => $y, 'z' => $z,
+            'hp' => self::MOB_TYPES[$type][2], 'life' => 0.0, 'lastHit' => 0.0,
         ];
         foreach ($this->players() as $p) {
             $this->sendMobSpawn($p, $eid, $type, $x, $y, $z);
         }
-
         return $eid;
     }
 
     private function sendMobSpawn(Connection $p, int $eid, int $type, float $x, float $y, float $z): void
     {
         $p->send(self::C_SPAWN_MOB, (new Writer())
-            ->varInt($eid)
-            ->byte($type)
-            ->int((int) ($x * 32))
-            ->int((int) ($y * 32))
-            ->int((int) ($z * 32))
-            ->byte(0)->byte(0)->byte(0)      // yaw / pitch / headPitch
-            ->short(0)->short(0)->short(0)   // 速度
-            ->unsignedByte(0x7F));           // DataWatcher 结束符
+            ->varInt($eid)->byte($type)
+            ->int((int) ($x * 32))->int((int) ($y * 32))->int((int) ($z * 32))
+            ->byte(0)->byte(0)->byte(0)
+            ->short(0)->short(0)->short(0)
+            ->unsignedByte(0x7F));
     }
 
-    /** 销毁一个生物并通知所有玩家。 */
     private function removeMob(int $eid): void
     {
         if (!isset($this->mobs[$eid])) {
@@ -110,53 +84,104 @@ trait MobTrait
         }
     }
 
-    /** 每 tick 调用：游荡 + 远离玩家就消失 + 定时自然生成。 */
+    /** 打一只生物。返回 true = 这个 eid 是生物，已经处理。 */
+    private function damageMob(int $eid, int $dmg, Connection $attacker): bool
+    {
+        if (!isset($this->mobs[$eid])) {
+            return false;
+        }
+        $this->mobs[$eid]['hp'] -= $dmg;
+        $this->mobs[$eid]['lastHit'] = microtime(true);
+
+        $m = $this->mobs[$eid];
+        $dx = $m['x'] - $attacker->x;
+        $dz = $m['z'] - $attacker->z;
+        $len = sqrt($dx * $dx + $dz * $dz) ?: 1.0;
+        $nx = $m['x'] + ($dx / $len) * 0.6;
+        $nz = $m['z'] + ($dz / $len) * 0.6;
+        $ny = $this->groundY((int) floor($nx), (int) floor($nz), (int) $m['y']);
+        if ($ny <= 0) {
+            $ny = $m['y'];
+        }
+        $this->mobs[$eid]['x'] = $nx;
+        $this->mobs[$eid]['y'] = $ny;
+        $this->mobs[$eid]['z'] = $nz;
+        foreach ($this->players() as $p) {
+            $p->send(self::C_ENTITY_TELEPORT, (new Writer())
+                ->varInt($eid)
+                ->int((int) ($nx * 32))->int((int) ($ny * 32))->int((int) ($nz * 32))
+                ->byte(0)->byte(0)->bool(true));
+        }
+
+        if ($this->mobs[$eid]['hp'] > 0) {
+            return true;
+        }
+
+        [, , , $dropId, $dropCount] = self::MOB_TYPES[$m['type']];
+        $this->removeMob($eid);
+        if ($dropId > 0 && $dropCount > 0) {
+            for ($i = 0; $i < $dropCount; $i++) {
+                $this->spawnDrop((int) floor($m['x']), (int) floor($m['y']), (int) floor($m['z']), $dropId, 1, 0, $attacker);
+            }
+        }
+        $this->log("  {$attacker->username} 打死了 " . self::MOB_TYPES[$m['type']][0]);
+        return true;
+    }
+
     private function tickMobs(float $now): void
     {
-        if ($now - $this->lastMobTick >= 2.0) {
+        if ($now - $this->lastMobTick >= 1.0) {
             $this->lastMobTick = $now;
             foreach ($this->mobs as $eid => $m) {
-                // 附近没玩家了 → 消失（原版是 128 格，这里用 64 更省）
                 $near = $this->nearestPlayer($m['x'], $m['y'], $m['z'], 64.0);
                 if ($near === null) {
                     $this->removeMob($eid);
                     continue;
                 }
 
-                // 随机走一小步
-                $dx = random_int(-2, 2);
-                $dz = random_int(-2, 2);
-                if ($dx === 0 && $dz === 0) {
-                    continue;
-                }
-                $nx = $m['x'] + $dx;
-                $nz = $m['z'] + $dz;
-                $ny = $this->groundY((int) floor($nx), (int) floor($nz), (int) $m['y']);
+                $hostile = self::MOB_TYPES[$m['type']][1];
+                $nx = $m['x'];
+                $nz = $m['z'];
 
-                $this->mobs[$eid]['x'] = $nx;
-                $this->mobs[$eid]['y'] = $ny;
-                $this->mobs[$eid]['z'] = $nz;
-                $this->mobs[$eid]['life'] += 2.0;
-
-                foreach ($this->players() as $p) {
-                    $p->send(self::C_ENTITY_TELEPORT, (new Writer())
-                        ->varInt($eid)
-                        ->int((int) ($nx * 32))
-                        ->int((int) ($ny * 32))
-                        ->int((int) ($nz * 32))
-                        ->byte(random_int(0, 255))
-                        ->byte(0)
-                        ->bool(true));
+                if ($hostile) {
+                    $dx = $near->x - $m['x'];
+                    $dz = $near->z - $m['z'];
+                    $dist = sqrt($dx * $dx + $dz * $dz);
+                    if ($dist > 1.6 && $dist < 16.0) {
+                        $nx = $m['x'] + $dx / $dist;
+                        $nz = $m['z'] + $dz / $dist;
+                    } elseif ($dist <= 2.2 && $now - $m['lastHit'] > 1.5) {
+                        $this->damage($near, 1);
+                        $this->mobs[$eid]['lastHit'] = $now;
+                    }
+                } else {
+                    $nx = $m['x'] + random_int(-1, 1);
+                    $nz = $m['z'] + random_int(-1, 1);
                 }
 
-                // 活够 5 分钟自然消失，避免越积越多
+                if (abs($nx - $m['x']) > 0.001 || abs($nz - $m['z']) > 0.001) {
+                    $ny = $this->groundY((int) floor($nx), (int) floor($nz), (int) $m['y'] + 1);
+                    if ($ny <= 0) {
+                        $ny = $m['y'];
+                    }
+                    $this->mobs[$eid]['x'] = $nx;
+                    $this->mobs[$eid]['y'] = $ny;
+                    $this->mobs[$eid]['z'] = $nz;
+                    foreach ($this->players() as $p) {
+                        $p->send(self::C_ENTITY_TELEPORT, (new Writer())
+                            ->varInt($eid)
+                            ->int((int) ($nx * 32))->int((int) ($ny * 32))->int((int) ($nz * 32))
+                            ->byte(0)->byte(0)->bool(true));
+                    }
+                }
+
+                $this->mobs[$eid]['life'] += 1.0;
                 if ($this->mobs[$eid]['life'] > 300) {
                     $this->removeMob($eid);
                 }
             }
         }
 
-        // 自然生成：每 5 秒给每个玩家附近放几只
         if ($now - $this->lastMobSpawn >= 5.0) {
             $this->lastMobSpawn = $now;
             foreach ($this->players() as $p) {
@@ -172,22 +197,15 @@ trait MobTrait
     {
         $x = (int) floor($p->x) + random_int(-16, 16);
         $z = (int) floor($p->z) + random_int(-16, 16);
+        if (abs($x - $p->x) < 4 && abs($z - $p->z) < 4) {
+            return;
+        }
         $y = $this->groundY($x, $z, (int) floor($p->y) + 8);
         if ($y <= 0) {
             return;
         }
-
-        // 别生成在玩家脸上
-        if (abs($x - $p->x) < 4 && abs($z - $p->z) < 4) {
-            return;
-        }
-
         $biome = $this->biomeAt($x, $z);
-        $night = $this->isNight();
-        $types = $night
-            ? self::MOB_HOSTILE
-            : (self::BIOME_PASSIVE[$biome] ?? []);
-
+        $types = $this->isNight() ? self::MOB_HOSTILE : (self::BIOME_PASSIVE[$biome] ?? []);
         if ($types === []) {
             return;
         }
@@ -195,7 +213,6 @@ trait MobTrait
         $this->spawnMob($type, $x + 0.5, (float) $y, $z + 0.5);
     }
 
-    /** 从 startY 往下找第一个实心方块，返回它上面一层的 y。找不到返回 0。 */
     private function groundY(int $x, int $z, int $startY): int
     {
         $chunk = $this->world->chunk($x >> 4, $z >> 4);
@@ -205,7 +222,6 @@ trait MobTrait
                 return $y + 1;
             }
         }
-
         return 0;
     }
 
@@ -216,16 +232,12 @@ trait MobTrait
         if ($biomes === null || strlen($biomes) !== 256) {
             return 1;
         }
-        $i = ($z & 15) * 16 + ($x & 15);
-
-        return ord($biomes[$i]);
+        return ord($biomes[($z & 15) * 16 + ($x & 15)]);
     }
 
-    /** 白天 = 世界时间 0~12000。拿不到时间就当白天。 */
     private function isNight(): bool
     {
         $time = $this->world->timeOfDay();
-
         return $time >= 13000 && $time <= 23000;
     }
 }

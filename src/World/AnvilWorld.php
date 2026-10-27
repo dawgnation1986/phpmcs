@@ -500,10 +500,19 @@ final class AnvilWorld
         return $out;
     }
 
-    /** 世界时间。没有真的昼夜循环，用 20 分钟一轮的假时钟，够生物分昼夜用。 */
+    /**
+     * 世界时间（0~23999）。真的在走：每秒 20 tick，24000 tick 一天 = 20 分钟。
+     * 从 0 点开始，客户端靠 0x03 Time Update 跟着走。
+     */
     public function timeOfDay(): int
     {
-        return (int) (fmod(microtime(true) / 1200.0, 1.0) * 24000);
+        return (int) (fmod(microtime(true) * 20, 24000.0));
+    }
+
+    /** 世界总 tick 数（Time Update 里第一个 long）。 */
+    public function worldAge(): int
+    {
+        return (int) (microtime(true) * 20);
     }
 
     /** @return array{food:int,hp:float} 上次下线的饱食度和血量 */
