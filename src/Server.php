@@ -2158,7 +2158,12 @@ final class Server
      */
     private function sendCursor(Connection $c): void
     {
-        $this->sendWindowSlot($c, -1, -1, $c->cursor);
+        // 停用。1.8.9 客户端收到 windowId=-1 / slot=-1 的 Set Slot 时会走
+        // Container.getSlot(-1) → IndexOutOfBoundsException（日志里每次进服、
+        // 每次点击都有一条，length 45/46/63 分别对应背包/工作台/箱子）。
+        // 异常发生在主线程的 packet 批里，同一批后面的包直接不处理 ——
+        // 箱子的 0x35 就是这么被吞的。
+        // 光标由客户端自己维护，服务端不纠正它也不会崩，最多偶尔不同步。
     }
 
     /** 按当前打开的窗口，把玩家背包槽位换算成容器槽位再发 Set Slot */
