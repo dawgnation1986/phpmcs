@@ -808,19 +808,15 @@ final class Server
                     $this->openChest($c, $x, $y, $z);
                     break;
                 }
-                if ($hitId === 98) {
-                    $meta98 = $this->world->chunk($x >> 4, $z >> 4)
-                        ->blockState($x & 15, $y, $z & 15) & 0x0F;
-                    if ($meta98 === 3) {
-                        if ($this->hasFurnace($x, $y, $z)) {
-                            $this->openFurnace($c, $x, $y, $z);
-                            $this->log("  打开熔炉 {$x},{$y},{$z}");
-                        } else {
-                            $this->log("  雕纹石砖 @ {$x},{$y},{$z} 没有熔炉记录");
-                            $this->sendChat($c, ['text' => '这块雕纹石砖没有熔炉记录——重新放一个熔炉试试。', 'color' => 'gray'], 1);
-                        }
-                        break;
+                if ($hitId === 49) {
+                    if ($this->hasFurnace($x, $y, $z)) {
+                        $this->openFurnace($c, $x, $y, $z);
+                        $this->log("  打开熔炉 {$x},{$y},{$z}");
+                    } else {
+                        $this->log("  黑曜石 @ {$x},{$y},{$z} 没有熔炉记录");
+                        $this->sendChat($c, ['text' => '这块黑曜石没有熔炉记录——放一个熔炉试试。', 'color' => 'gray'], 1);
                     }
+                    break;
                 }
                 if ($hitId === 58) {
                     $this->openWorkbench($c);
@@ -887,11 +883,10 @@ final class Server
                 // 会在 1.8.9 上抛 NPE，方块状态永远落不了地。
                 // 改成放书架(47) + 在 ChestStore 里留一条记录，右键照样开箱。
                 if ($blockId === 61) {
-                    // 用「雕纹石砖(98:3)」承载：这个方块本来就少见，
-                    // 资源包里换它的贴图不会破坏普通石砖。
-                    $this->changeBlock($tx, $ty, $tz, 98, 3);
+                    // 用黑曜石(49)承载：深紫黑、一眼能认，也不会被当成建筑方块。
+                    $this->changeBlock($tx, $ty, $tz, 49, 0);
                     $this->ensureFurnace($tx, $ty, $tz);
-                    $blockId = 98;
+                    $blockId = 49;
                 } elseif ($blockId === 54) {
                     $this->changeBlock($tx, $ty, $tz, 47, 0);
                     $this->chests->ensure($tx, $ty, $tz);
