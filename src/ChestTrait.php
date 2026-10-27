@@ -137,6 +137,10 @@ trait ChestTrait
 
     private function openChest(Connection $c, int $x, int $y, int $z): void
     {
+        // 开箱子必须把熔炉状态清掉：两者现在共用 windowId=1，
+        // 点击分发按 $c->furnace 判断，熔炉不清就会把箱子的点击当成熔炉的，
+        // 表现就是「手指上有物品，点格子放不进去」。
+        $c->furnace = null;
         $this->closeChest($c);
         $this->closeWorkbench($c);
         // 2x2 合成格在箱子窗口里看不到，先把里面的东西还回背包

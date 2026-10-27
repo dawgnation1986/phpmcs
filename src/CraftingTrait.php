@@ -367,6 +367,7 @@ trait CraftingTrait
     /** 打开工作台：1.8 客户端的 ContainerWorkbench windowId 就是 0，46 格 */
     private function openWorkbench(Connection $c): void
     {
+        $c->furnace = null;   // 同上：清掉熔炉状态，避免点击分发串台
         if ($c->workbench) {
             $this->closeWorkbench($c);
         }
