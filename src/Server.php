@@ -818,6 +818,22 @@ final class Server
                 }
 
                 $itemId = $r->readShort();
+                if ($itemId === 383) {
+                    // 刷怪蛋：damage 就是生物类型
+                    $r->readByte();
+                    $eggMeta = $r->readShort();
+                    $type = $eggMeta - 32;      // 刷怪蛋 383:x 对应生物 x+32 的映射不唯一，这里按常见偏移
+                    if (!isset(self::MOB_TYPES[$type])) {
+                        $type = $eggMeta == 50 ? 50 : $type;
+                    }
+                    if (isset(self::MOB_TYPES[$type])) {
+                        [$tx, $ty, $tz] = self::offsetByFace($x, $y, $z, $face);
+                        $gy = $this->groundY($tx, $tz, $ty + 2);
+                        $this->spawnMob($type, $tx + 0.5, (float) ($gy > 0 ? $gy : $ty), $tz + 0.5);
+                        $this->log("  {$c->username} 用刷怪蛋生成了 " . self::MOB_TYPES[$type][0]);
+                    }
+                    break;
+                }
                 if ($itemId <= 0) {
                     break; // 手上不是方块
                 }
@@ -1287,7 +1303,13 @@ final class Server
         } elseif ($onGround && $c->fallFrom >= 0) {
             $fall = $c->fallFrom - $c->y;
             $c->fallFrom = -1.0;
-            if ($fall > 3.0) {
+
+            // 落水里/岩浆里不摔伤（原版：水里、网里、草堆上都不算摔落）
+            $chunk = $this->world->chunk(((int) floor($c->x)) >> 4, ((int) floor($c->z)) >> 4);
+            $feet = $chunk->blockState(((int) floor($c->x)) & 15, (int) floor($c->y), ((int) floor($c->z)) & 15) >> 4;
+            $inWater = in_array($feet, [8, 9, 10, 11], true);
+
+            if ($fall > 3.0 && !$inWater) {
                 $this->damage($c, (int) ceil($fall - 3.0));
             }
         }

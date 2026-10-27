@@ -133,8 +133,18 @@ trait MobTrait
         if ($now - $this->lastMobTick >= 1.0) {
             $this->lastMobTick = $now;
             foreach ($this->mobs as $eid => $m) {
-                $near = $this->nearestPlayer($m['x'], $m['y'], $m['z'], 64.0);
-                if ($near === null) {
+                // 注意：不能用 nearestPlayer()，那个是捡东西的近距离判定
+                // （横向只认 ±1.3 格），生物离你 4 格就被判「附近没人」直接销毁。
+                $near = null;
+                $bestD = PHP_FLOAT_MAX;
+                foreach ($this->players() as $pp) {
+                    $d = sqrt(($pp->x - $m['x']) ** 2 + ($pp->y - $m['y']) ** 2 + ($pp->z - $m['z']) ** 2);
+                    if ($d < $bestD) {
+                        $bestD = $d;
+                        $near = $pp;
+                    }
+                }
+                if ($near === null || $bestD > 64.0) {
                     $this->removeMob($eid);
                     continue;
                 }
