@@ -891,6 +891,25 @@ final class Server
                     $this->changeBlock($tx, $ty, $tz, 47, 0);
                     $this->chests->ensure($tx, $ty, $tz);
                     $blockId = 47;
+                } elseif ($blockId === 26) {
+                    // 床：两格宽。foot + head 一起放，head 的 meta 加 0x8。
+                    $i = ((int) floor(fmod($c->yaw, 360.0) / 90.0 + 0.5)) & 3;
+                    // 0 南(+z) 1 西(-x) 2 北(-z) 3 东(+x)
+                    $off = [[0, 1], [-1, 0], [0, -1], [1, 0]][$i];
+                    $hx = $tx + $off[0];
+                    $hz = $tz + $off[1];
+                    $this->changeBlock($tx, $ty, $tz, 26, $i);
+                    $this->changeBlock($hx, $ty, $hz, 26, $i | 0x8);
+                    $blockId = 26;
+                } elseif ($blockId === 64 || $blockId === 71) {
+                    // 门：两格高。下半 0-3 朝向，上半 = 下半 | 0x8。
+                    $i = ((int) floor(fmod($c->yaw, 360.0) / 90.0 + 0.5)) & 3;
+                    $doorMeta = ($i + 1) & 3;
+                    $this->changeBlock($tx, $ty, $tz, $blockId, $doorMeta);
+                    if ($ty < 255) {
+                        $this->changeBlock($tx, $ty + 1, $tz, $blockId, $doorMeta | 0x8);
+                    }
+                    $blockId = $blockId;
                 } else {
                     $this->changeBlock($tx, $ty, $tz, $blockId, $this->placeMeta($c, $blockId, $damage & 0x0F));
                 }
