@@ -478,7 +478,7 @@ final class Server
         $this->queueChunks($c);
 
         // 6) 出生点 + 位置同步
-        $c->send(self::C_SPAWN_POSITION, (new Writer())->long($this->packPosition($sx, $sy, $sz)));
+        $c->send(self::C_SPAWN_POSITION, (new Writer())->raw($this->packPositionBytes($sx, $sy, $sz)));
         $c->send(self::C_POS_LOOK, (new Writer())
             ->double($c->x)->double($c->y)->double($c->z)
             ->float($c->yaw)->float($c->pitch)
@@ -569,7 +569,7 @@ final class Server
         // 4 头颅 / 5 / 6），箱子没有特殊分支，填 0 即可。客户端会先按方块
         // 建出 TileEntityChest，再走这里。
         $c->send(self::C_UPDATE_TILE_ENTITY, (new Writer())
-            ->long($this->packPosition($x, $y, $z))
+            ->raw($this->packPositionBytes($x, $y, $z))
             ->byte(0)
             ->raw($nbt));
     }
@@ -753,7 +753,7 @@ final class Server
                         // 客户端以为这里有方块，服务端这边是空气。
                         // 直接把这个「空气」打回去，客户端收到就会把幽灵方块擦掉。
                         $c->send(self::C_BLOCK_CHANGE, (new Writer())
-                            ->long($this->packPosition($x, $y, $z))
+                            ->raw($this->packPositionBytes($x, $y, $z))
                             ->varInt(0));
                     } else {
                         $this->breakBlock($c, $x, $y, $z);
@@ -765,7 +765,7 @@ final class Server
                     $now2 = $this->world->chunk($x >> 4, $z >> 4)
                         ->blockState($x & 15, $y, $z & 15);
                     $c->send(self::C_BLOCK_CHANGE, (new Writer())
-                        ->long($this->packPosition($x, $y, $z))
+                        ->raw($this->packPositionBytes($x, $y, $z))
                         ->varInt($now2));
                 }
                 break;
@@ -806,7 +806,7 @@ final class Server
                     $near = $this->chestNextTo($x, $y, $z, $face);
                     if ($near !== null) {
                         $c->send(self::C_BLOCK_CHANGE, (new Writer())
-                            ->long($this->packPosition($x, $y, $z))
+                            ->raw($this->packPositionBytes($x, $y, $z))
                             ->varInt(0));
                         $this->log("  幽灵方块 @ {$x},{$y},{$z} -> 打开真箱子 {$near[0]},{$near[1]},{$near[2]}");
                         $this->openChest($c, $near[0], $near[1], $near[2]);
@@ -833,7 +833,7 @@ final class Server
                     $now = $this->world->chunk($tx >> 4, $tz >> 4)
                         ->blockState($tx & 15, $ty, $tz & 15);
                     $c->send(self::C_BLOCK_CHANGE, (new Writer())
-                        ->long($this->packPosition($tx, $ty, $tz))
+                        ->raw($this->packPositionBytes($tx, $ty, $tz))
                         ->varInt($now));
                     $this->log("  放 方块{$blockId} @ {$tx},{$ty},{$tz} 被拒：这个位置不能种");
                     break;
@@ -1195,7 +1195,7 @@ final class Server
     private function broadcastBlockChange(int $x, int $y, int $z, int $state): void
     {
         $packet = (new Writer())
-            ->long($this->packPosition($x, $y, $z))
+            ->raw($this->packPositionBytes($x, $y, $z))
             ->varInt($state);
         foreach ($this->players() as $p) {
             $p->send(self::C_BLOCK_CHANGE, $packet);
@@ -3005,6 +3005,25 @@ final class Server
     private function packPosition(int $x, int $y, int $z): int
     {
         return (($x & 0x3FFFFFF) << 38) | (($y & 0xFFF) << 26) | ($z & 0x3FFFFFF);
+    }
+
+    /**
+     * 同样一个位置，直接给出 8 字节大端。
+     *
+     * 上面那个 packPosition 在**负坐标**时是坏的：
+     *   ($x & 0x3FFFFFF) << 38  ->  x = -94 时约 1.8e19，超过 PHP_INT_MAX，
+     *   PHP 静默转成 float，pack('J') 写出来的 8 字节就是垃圾。
+     * 客户端收到错误坐标，Block Change / TileEntity 全落到别处，
+     * 表现出来就是「发了包但世界毫无反应」。
+     *
+     * 这里按 64 位的高/低 32 位分开拼，不产生溢出。
+     */
+    private function packPositionBytes(int $x, int $y, int $z): string
+    {
+        $hi = (($x & 0x3FFFFFF) << 6) | (($y & 0xFFF) >> 6);
+        $lo = ((($y & 0xFFF) & 0x3F) << 26) | ($z & 0x3FFFFFF);
+
+        return pack('N2', $hi & 0xFFFFFFFF, $lo & 0xFFFFFFFF);
     }
 
     /** @return array{0:int,1:int,2:int} */
