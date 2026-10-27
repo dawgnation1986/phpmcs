@@ -886,7 +886,7 @@ final class Server
                     // 用绿宝石块(133)承载：玩家几乎不会拿它盖房，贴图可以放心画成炉子。
                     $this->changeBlock($tx, $ty, $tz, 133, 0);
                     $this->ensureFurnace($tx, $ty, $tz);
-                    $blockId = 49;
+                    $blockId = 133;   // 必须和上面 changeBlock 的 id 一致，否则扣物品那步会判定失败
                 } elseif ($blockId === 54) {
                     $this->changeBlock($tx, $ty, $tz, 47, 0);
                     $this->chests->ensure($tx, $ty, $tz);
