@@ -3031,6 +3031,7 @@ final class Server
                 continue;
             }
             array_shift($p->chestSectionTimes);
+            $p->chestFixRound++;
             $sent = 0;
             foreach ($p->chestSections as [$scx, $scz, $sy]) {
                 // 不发段数据了（段重发会把客户端的 TE 打掉、光也会被旧值覆盖）。
@@ -3050,10 +3051,14 @@ final class Server
                     //    没变会返回 null —— 方块不动、TE 不删，只触发一次 RenderChunk.rebuild，
                     //    重建时 TE 才被收进 CompiledChunk，箱子这才画得出来。
                     // 之前发书架(47<<4) 是错的：换方块会把箱子的 TE 删掉。
+                    // 第一轮只造 TE；从第二轮起再发同状态 0x23 触发重建。
+                    // 同一 tick 里连着发，重建可能赶在 TE 进列表之前，等于白重建。
                     $this->sendTileEntity($p, $bx, $by, $bz);
-                    $p->send(self::C_BLOCK_CHANGE, (new Writer())
-                        ->raw($this->packPositionBytes($bx, $by, $bz))
-                        ->varInt($chunk->blockState($bx & 15, $by, $bz & 15)));
+                    if ($p->chestFixRound >= 1) {
+                        $p->send(self::C_BLOCK_CHANGE, (new Writer())
+                            ->raw($this->packPositionBytes($bx, $by, $bz))
+                            ->varInt($chunk->blockState($bx & 15, $by, $bz & 15)));
+                    }
                     $sent++;
                 }
             }
