@@ -124,6 +124,9 @@ final class Server
     use CraftingTrait;
 
     public const PROTOCOL = 47;
+
+    /** 段重发开关：先关着（见 flushSections 的注释） */
+    private const ENABLE_SECTION_RESEND = false;
     public const VERSION = '1.8.9';
 
     // 客户端包 ID
@@ -514,7 +517,17 @@ final class Server
 
         // 区块包只带方块字节，不带瓦片实体。箱子没有 TileEntityChest
         // 客户端就完全不画；重进世界「箱子消失」就是这个原因。
-        foreach ($this->world->chunk($cx, $cz)->blockPositions(54) as [$x, $y, $z]) {
+        // 光发 0x35 不够：客户端的 handleUpdateTileEntity 是
+        //     TileEntity te = world.getTileEntity(pos);
+        //     if (te != null) te.readFromNBT(...);
+        // 区块刚落地时 TE 不存在，null 被默默丢掉。
+        // 先补一个 Block Change 逼客户端走 setBlockState（它才会 createTileEntity），
+        // 再发 0x35 填数据。
+        $chunk = $this->world->chunk($cx, $cz);
+        foreach ($chunk->blockPositions(54) as [$x, $y, $z]) {
+            $c->send(self::C_BLOCK_CHANGE, (new Writer())
+                ->long($this->packPosition($x, $y, $z))
+                ->varInt($chunk->blockState($x & 15, $y, $z & 15)));
             $this->sendTileEntity($c, $x, $y, $z);
         }
     }
@@ -1096,6 +1109,13 @@ final class Server
      */
     private function flushSections(): void
     {
+        // 停用开关：这段代码现在没有任何调用点，留着是为了将来做真正的
+        // 光照传播时接着用。谁要重新启用，先读 markSection 上面那段注释 ——
+        // 拿存档里的旧光照覆盖客户端，会让玩家「挖完反而变黑」。
+        if (!self::ENABLE_SECTION_RESEND) {
+            return;
+        }
+
         if ($this->dirtySections === []) {
             return;
         }
