@@ -43,6 +43,8 @@ final class Connection
     public array $chestSectionTimes = [];
     /** 箱子补发跑到第几轮了（0 起）：第一轮只造 TE，之后才发 0x23 */
     public int $chestFixRound = 0;
+    /** 是否已经提示过「书架其实是箱子」 */
+    public bool $chestHinted = false;
     /** @var array<int,array{id:int,count:int,damage:int}|null> 玩家 2x2 合成格 */
     public array $craftGrid = [null, null, null, null];
     /** @var array<int,array{id:int,count:int,damage:int}|null> 工作台 3x3 合成格 */
@@ -3053,13 +3055,23 @@ final class Server
                     //    没变会返回 null —— 方块不动、TE 不删，只触发一次 RenderChunk.rebuild，
                     //    重建时 TE 才被收进 CompiledChunk，箱子这才画得出来。
                     // 之前发书架(47<<4) 是错的：换方块会把箱子的 TE 删掉。
-                    // 第一轮只造 TE；从第二轮起再发同状态 0x23 触发重建。
-                    // 同一 tick 里连着发，重建可能赶在 TE 进列表之前，等于白重建。
+                    // 走了很久的弯路，结论是 1.8 客户端在「区块已编译完之后」
+                    // 收 0x35 也不会把 TE 塞进 CompiledChunk，同状态 0x23 触发重建
+                    // 也没用（我们验证过多轮）。
+                    //
+                    // 所以退回「客户端画成书架」：服务端方块数据仍然是 54，
+                    // 右键查的是我们自己的世界数据，开箱/存取完全不受影响。
+                    // 书架是储物类方块里唯一不需要 TE 的，一定画得出来。
                     $this->sendTileEntity($p, $bx, $by, $bz);
-                    if ($p->chestFixRound >= 2) {   // 第 1 轮只造 TE，从第 2 轮起才触发重建
-                        $p->send(self::C_BLOCK_CHANGE, (new Writer())
-                            ->raw($this->packPositionBytes($bx, $by, $bz))
-                            ->varInt($chunk->blockState($bx & 15, $by, $bz & 15)));
+                    $p->send(self::C_BLOCK_CHANGE, (new Writer())
+                        ->raw($this->packPositionBytes($bx, $by, $bz))
+                        ->varInt(47 << 4));   // 47 = 书架
+                    if ($p->chestFixRound === 1 && !$p->chestHinted) {
+                        $p->chestHinted = true;
+                        $this->sendChat($p, [
+                            'text' => '提示：附近这些「书架」其实是箱子（1.8 客户端渲染限制），右键可正常打开存取。',
+                            'color' => 'gray',
+                        ], 1);
                     }
                     $sent++;
                 }
