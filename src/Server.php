@@ -900,10 +900,14 @@ final class Server
                 // 「消耗完的东西又回来了，放的方块还不消失」。
                 $placed = ($this->world->chunk($tx >> 4, $tz >> 4)
                     ->blockState($tx & 15, $ty, $tz & 15) >> 4) === $blockId;
+                $heldSlot = 36 + $c->heldSlot;
+                $held = $c->inventory[$heldSlot] ?? null;
+                $this->log('  放置结算：模式=' . $c->gamemode
+                    . ' 手上=' . ($held === null ? '空' : $held['id'] . 'x' . $held['count'])
+                    . ' 物品id=' . $itemId . ' 世界方块=' . $blockId
+                    . ' placed=' . ($placed ? 1 : 0));
                 if ($placed && $c->gamemode !== 1) {
-                    $heldSlot = 36 + $c->heldSlot;
-                    $held = $c->inventory[$heldSlot] ?? null;
-                    if ($held !== null && $held['id'] === $itemId) {
+                    if ($held !== null && ($held['id'] === $itemId || $held['id'] === $blockId)) {
                         if ($held['count'] > 1) {
                             $held['count']--;
                             $c->inventory[$heldSlot] = $held;
