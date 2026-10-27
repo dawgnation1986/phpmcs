@@ -504,9 +504,21 @@ final class AnvilWorld
      * 世界时间（0~23999）。真的在走：每秒 20 tick，24000 tick 一天 = 20 分钟。
      * 从 0 点开始，客户端靠 0x03 Time Update 跟着走。
      */
+    private ?int $timeOffset = null;
+
     public function timeOfDay(): int
     {
-        return (int) (fmod(microtime(true) * 20, 24000.0));
+        $v = (int) fmod(microtime(true) * 20, 24000.0) + ($this->timeOffset ?? 0);
+        $v %= 24000;
+
+        return $v < 0 ? $v + 24000 : $v;
+    }
+
+    /** 直接把时间拨到某个 tick（/timeset 用）。 */
+    public function setTimeOfDay(int $t): void
+    {
+        $t = (($t % 24000) + 24000) % 24000;
+        $this->timeOffset = $t - (int) fmod(microtime(true) * 20, 24000.0);
     }
 
     /** 世界总 tick 数（Time Update 里第一个 long）。 */

@@ -2088,6 +2088,31 @@ final class Server
                 $this->sendChat($c, ['text' => "已生成 {$count} 只 " . self::MOB_TYPES[$type][0] . "（实体数 " . count($this->mobs) . '）', 'color' => 'green'], 1);
                 break;
 
+            case 'timeset':
+                // /timeset <0-23999>：0 早上、6000 中午、13000 日落、18000 午夜
+                if ($arg === '' || !is_numeric($arg)) {
+                    $this->sendChat($c, ['text' => '用法：/timeset <0-23999>（0 早、6000 中午、13000 日落、18000 午夜）', 'color' => 'yellow'], 1);
+                    break;
+                }
+                $this->world->setTimeOfDay((int) $arg);
+                $this->sendChat($c, ['text' => '时间已设为 ' . $this->world->timeOfDay() . '（' . ($this->isNight() ? '夜' : '昼') . '）', 'color' => 'aqua'], 1);
+                $this->log("  {$c->username} /timeset " . (int) $arg);
+                break;
+
+            case 'kill':
+                // /kill @e 杀光所有生物；/kill 只杀自己（受伤到 0）
+                if (($parts[0] ?? '') === '@e') {
+                    $n = count($this->mobs);
+                    foreach (array_keys($this->mobs) as $eid) {
+                        $this->removeMob($eid);
+                    }
+                    $this->sendChat($c, ['text' => "已清除 {$n} 只生物", 'color' => 'aqua'], 1);
+                    $this->log("  {$c->username} /kill @e 清除 {$n} 只");
+                } else {
+                    $this->damage($c, 20);
+                }
+                break;
+
             case 'mobtest':
                 // 调试：不管昼夜、不管群系，把 16 种生物在你面前排一排
                 $baseY = (int) floor($c->y);
