@@ -535,7 +535,12 @@ final class Server
         }
         if ($chests !== []) {
             $now = microtime(true);
-            $c->chestSectionTimes = [$now + 2.0, $now + 5.0];
+            // 每 2 秒喂一轮，共 15 轮（30 秒）。客户端什么时候把区块真正加载好，
+            // 下一轮就能把 TE 建出来；建好后多余的轮次是无害的空转。
+            $c->chestSectionTimes = [];
+            for ($i = 1; $i <= 15; $i++) {
+                $c->chestSectionTimes[] = $now + 2.0 * $i;
+            }
         }
     }
 
@@ -2830,18 +2835,18 @@ final class Server
             array_shift($p->chestSectionTimes);
             $sent = 0;
             foreach ($p->chestSections as [$scx, $scz, $sy]) {
-                $data = $this->world->chunk($scx, $scz)->sectionPayload($sy);
-                if ($data === null) {
-                    continue;
+                // 不发段数据了（段重发会把客户端的 TE 打掉、光也会被旧值覆盖）。
+                // 只对这个段里的每个箱子喂一次 0x35：
+                // 客户端 handleUpdateTileEntity 第一句 world.s(pos) 是
+                // getTileEntity(IMMEDIATE)，会当场 createNewTileEntity。
+                $chunk = $this->world->chunk($scx, $scz);
+                foreach ($chunk->blockPositions(54) as [$bx, $by, $bz]) {
+                    if (($by >> 4) !== $sy) {
+                        continue;
+                    }
+                    $this->sendTileEntity($p, $bx, $by, $bz);
+                    $sent++;
                 }
-                $p->send(self::C_CHUNK_DATA, (new Writer())
-                    ->int($scx)
-                    ->int($scz)
-                    ->bool(false)            // 只更新这一段
-                    ->short(1 << $sy)
-                    ->varInt(strlen($data))
-                    ->raw($data));
-                $sent++;
             }
             if ($p->chestSectionTimes === []) {
                 $p->chestSections = [];
