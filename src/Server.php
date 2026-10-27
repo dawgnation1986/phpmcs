@@ -820,6 +820,26 @@ final class Server
                 }
                 $this->log("  放 方块{$blockId} @ {$tx},{$ty},{$tz}（物品 {$itemId}，点的 {$x},{$y},{$z} 面 {$face}）");
                 $this->changeBlock($tx, $ty, $tz, $blockId, $damage & 0x0F);
+
+                // 放置成功要扣手里的方块。少了这一步：客户端本地把 13 减成 12，
+                // 下一次整窗重发又推回服务端的 13 —— 玩家看到的就是
+                // 「消耗完的东西又回来了，放的方块还不消失」。
+                $placed = ($this->world->chunk($tx >> 4, $tz >> 4)
+                    ->blockState($tx & 15, $ty, $tz & 15) >> 4) === $blockId;
+                if ($placed && $c->gamemode !== 1) {
+                    $heldSlot = 36 + $c->heldSlot;
+                    $held = $c->inventory[$heldSlot] ?? null;
+                    if ($held !== null && $held['id'] === $itemId) {
+                        if ($held['count'] > 1) {
+                            $held['count']--;
+                            $c->inventory[$heldSlot] = $held;
+                            $this->sendInventorySlot($c, $heldSlot, $held);
+                        } else {
+                            unset($c->inventory[$heldSlot]);
+                            $this->sendInventorySlot($c, $heldSlot, null);
+                        }
+                    }
+                }
                 break;
 
             case 0x10: // 创造模式从背包拿东西
