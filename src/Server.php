@@ -127,6 +127,7 @@ final class Server
 {
     use ChestTrait;
     use CraftingTrait;
+    use MobTrait;
 
     public const PROTOCOL = 47;
 
@@ -142,6 +143,7 @@ final class Server
     private const C_POS_LOOK = 0x08;
     private const C_SPAWN_PLAYER = 0x0C;
     private const C_DESTROY_ENTITIES = 0x13;
+    private const C_SPAWN_MOB = 0x0F;
     private const C_ENTITY_LOOK = 0x16;
     private const C_ENTITY_TELEPORT = 0x18;
     private const C_HEAD_LOOK = 0x19;
@@ -2049,6 +2051,36 @@ final class Server
                 $this->log("手动 reload：存盘 {$saved}，清缓存 {$n}");
                 break;
 
+            case 'spawn':
+                // /spawn <名字或 id> [数量]
+                $parts = preg_split('/\s+/', trim($args));
+                $key = strtolower($parts[0] ?? '');
+                $count = max(1, min(20, (int) ($parts[1] ?? 1)));
+                $type = 0;
+                if (ctype_digit($key)) {
+                    $type = (int) $key;
+                } else {
+                    foreach (self::MOB_TYPES as $id => [$name, $hostile]) {
+                        if ($name === $key) { $type = $id; break; }
+                    }
+                }
+                if (!isset(self::MOB_TYPES[$type])) {
+                    $names = [];
+                    foreach (self::MOB_TYPES as $id => [$name, $hostile]) { $names[] = $name; }
+                    $this->sendChat($c, ['text' => '用法：/spawn <' . implode('|', array_slice($names, 0, 6)) . '|...> [数量]', 'color' => 'yellow'], 1);
+                    break;
+                }
+                $baseY = (int) floor($c->y);
+                for ($i = 0; $i < $count; $i++) {
+                    $px = (int) floor($c->x) + random_int(-4, 4);
+                    $pz = (int) floor($c->z) + random_int(-4, 4);
+                    $py = $this->groundY($px, $pz, $baseY + 4);
+                    if ($py <= 0) { $py = $baseY; }
+                    $this->spawnMob($type, $px + 0.5, (float) $py, $pz + 0.5);
+                }
+                $this->log("  {$c->username} 生成了 {$count} 只 " . self::MOB_TYPES[$type][0]);
+                break;
+
             case 'hit':
                 [$hx, $hy, $hz, $hid, $hmeta] = $this->raycast($c, 5.0);
                 $this->sendChat($c, $hid === 0
@@ -2907,6 +2939,7 @@ final class Server
         }
 
         $this->processDrops();
+        $this->tickMobs($now);
 
         // 箱子段补发：进服 2 秒 / 5 秒后，把带箱子的区块段整段再发一次。
         // 只发段数据（方块+光），不发空气、不改方块；客户端收到会重建渲染区块，

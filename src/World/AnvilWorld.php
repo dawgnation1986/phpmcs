@@ -500,6 +500,12 @@ final class AnvilWorld
         return $out;
     }
 
+    /** 世界时间。没有真的昼夜循环，用 20 分钟一轮的假时钟，够生物分昼夜用。 */
+    public function timeOfDay(): int
+    {
+        return (int) (fmod(microtime(true) / 1200.0, 1.0) * 24000);
+    }
+
     /** @return array{food:int,hp:float} 上次下线的饱食度和血量 */
     public function vitals(string $name): array
     {

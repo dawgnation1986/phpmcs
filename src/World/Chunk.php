@@ -26,6 +26,12 @@ final class Chunk
     ) {
     }
 
+    /** 256 字节的群系数组（z*16+x），拿不到返回 null。 */
+    public function biomes(): ?string
+    {
+        return Nbt::bytes($this->level(), 'Biomes');
+    }
+
     private function level(): ?Tag
     {
         return Nbt::child($this->root, 'Level');
