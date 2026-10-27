@@ -298,16 +298,16 @@ trait ChestTrait
                 $this->setWindowSlot($c, $slot, null);
                 $this->sendWindowSlot($c, 1, $i, $current);
                 $this->sendWindowSlot($c, 1, $slot, null);
-                $this->sendCursor($c, 1);
+                $this->sendCursor($c);
 
                 return;
             }
-            $this->sendCursor($c, 1);
+            $this->sendCursor($c);
 
             return;
         }
         if ($mode !== 0 || ($button !== 0 && $button !== 1)) {
-            $this->sendCursor($c, 1);
+            $this->sendCursor($c);
 
             return;
         }
@@ -316,6 +316,6 @@ trait ChestTrait
         $c->cursor = $newCursor;
         $this->setWindowSlot($c, $slot, $next);
         $this->sendWindowSlot($c, 1, $slot, $next);
-        $this->sendCursor($c, 1);
+        $this->sendCursor($c);
     }
 }

@@ -37,6 +37,10 @@ final class Connection
 
     /** @var array{id:int,count:int,damage:int}|null 服务端记录的光标物品 */
     public ?array $cursor = null;
+    /** @var array<string, array{0:int,1:int,2:int}> 进服时带箱子的区块段，稍后重发一次 */
+    public array $chestSections = [];
+    /** 段重发时间点（秒） */
+    public array $chestSectionTimes = [];
     /** @var array<int,array{id:int,count:int,damage:int}|null> 玩家 2x2 合成格 */
     public array $craftGrid = [null, null, null, null];
     /** @var array<int,array{id:int,count:int,damage:int}|null> 工作台 3x3 合成格 */
@@ -521,8 +525,17 @@ final class Server
         // 注意：绝不能先发空气「破状态」—— air 会把区块里已有的箱子方块
         // 一起打掉，之后补方块也救不回来，玩家看到的就是箱子永久消失。
         $chunk = $this->world->chunk($cx, $cz);
-        foreach ($chunk->blockPositions(54) as [$x, $y, $z]) {
+        $chests = $chunk->blockPositions(54);
+        foreach ($chests as [$x, $y, $z]) {
             $this->sendTileEntity($c, $x, $y, $z);
+            // 客户端有时在区块还没标成 loaded 时就处理 0x35，TE 建不出来；
+            // 过两秒把箱子所在的段整段重发一次，强制它重建渲染区块。
+            $sy = $y >> 4;
+            $c->chestSections[$cx . ',' . $cz . ',' . $sy] = [$cx, $cz, $sy];
+        }
+        if ($chests !== []) {
+            $now = microtime(true);
+            $c->chestSectionTimes = [$now + 2.0, $now + 5.0];
         }
     }
 
@@ -898,7 +911,7 @@ final class Server
                 // 不会出现「Shift 出一堆」「合成完又消失」这种分叉。
                 if (($mode === 5 && ($button & 3) === 2) || $mode !== 5) {
                     $this->sendFullWindow($c);
-                    $this->sendCursor($c, $windowId);
+                    $this->sendCursor($c);
                 }
                 $c->send(self::C_CONFIRM_TRANSACTION, (new Writer())
                     ->byte($windowId)->short($action)->bool(true));
@@ -2132,10 +2145,15 @@ final class Server
             ->byte($windowId)->short($slot)->raw($this->slotBytes($item)));
     }
 
-    /** 同步服务端记录的光标物品（窗口槽位 -1） */
-    private function sendCursor(Connection $c, int $windowId = 0): void
+    /**
+     * 同步服务端记录的光标物品。
+     * 1.8 里光标不是「当前窗口的 -1 号槽」：Set Slot 必须用
+     * windowId = -1、slot = -1。用窗口 ID 发，客户端会走容器分支去取
+     * get(-1)，直接 IndexOutOfBounds，背包/箱子/工作台全报错。
+     */
+    private function sendCursor(Connection $c): void
     {
-        $this->sendWindowSlot($c, $windowId, -1, $c->cursor);
+        $this->sendWindowSlot($c, -1, -1, $c->cursor);
     }
 
     /** 按当前打开的窗口，把玩家背包槽位换算成容器槽位再发 Set Slot */
@@ -2543,7 +2561,7 @@ final class Server
                 $this->updateCraftOutput($c);
             }
         }
-        $this->sendCursor($c, $windowId);
+        $this->sendCursor($c);
     }
 
     /**
@@ -2801,6 +2819,37 @@ final class Server
         }
 
         $this->processDrops();
+
+        // 箱子段补发：进服 2 秒 / 5 秒后，把带箱子的区块段整段再发一次。
+        // 只发段数据（方块+光），不发空气、不改方块；客户端收到会重建渲染区块，
+        // 这时 RenderChunk 会按方块自己建出 TileEntityChest，箱子就能画出来。
+        foreach ($this->players() as $p) {
+            if ($p->chestSections === [] || $p->chestSectionTimes === [] || $now < $p->chestSectionTimes[0]) {
+                continue;
+            }
+            array_shift($p->chestSectionTimes);
+            $sent = 0;
+            foreach ($p->chestSections as [$scx, $scz, $sy]) {
+                $data = $this->world->chunk($scx, $scz)->sectionPayload($sy);
+                if ($data === null) {
+                    continue;
+                }
+                $p->send(self::C_CHUNK_DATA, (new Writer())
+                    ->int($scx)
+                    ->int($scz)
+                    ->bool(false)            // 只更新这一段
+                    ->short(1 << $sy)
+                    ->varInt(strlen($data))
+                    ->raw($data));
+                $sent++;
+            }
+            if ($p->chestSectionTimes === []) {
+                $p->chestSections = [];
+            }
+            if ($sent > 0) {
+                $this->log("  补发箱子段 {$sent} 个 -> {$p->username}（剩 " . count($p->chestSectionTimes) . ' 轮）');
+            }
+        }
 
         // 自然回血：生存、饱食度 >= 18、没满血，每 4 秒回 1 点
         foreach ($this->players() as $p) {

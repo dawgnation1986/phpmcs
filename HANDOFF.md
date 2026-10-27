@@ -88,7 +88,9 @@ This overwrites the client's local prediction with server state. It fixes:
 - items disappearing after crafting;
 - items that appear placed on the client but are absent on the server.
 
-The cursor item is still synchronized separately with `Set Slot` slot -1.
+The cursor item is still synchronized separately with `Set Slot`.
+
+**1.8 cursor packet:** the cursor is **not** "slot -1 of the current window". It must be sent with `windowId = -1` **and** `slot = -1`. If you use the current window id (0/1/2) with slot -1, the client takes the container branch, calls `List.get(-1)`, and throws `IndexOutOfBoundsException: Index -1 out of bounds for length 45/46/63`. This was visible in the client log on every join and every click, and it broke the inventory/chest/workbench GUI. `Server::sendCursor()` now always sends `windowId = -1`.
 
 ### 4.3 Mode 5 mouse drag
 
@@ -156,6 +158,7 @@ Two separate bugs were fixed:
    - `Server::changeBlock()` sends `0x35` for a newly placed chest, and re-sends it for adjacent chests so the client recalculates the double-chest model.
    - Packet format: `long` packed BlockPos, `byte action = 0`, NBT compound `{id:"Chest", x, y, z}`.
    - **Do not send an air Block Change at a chest position to “force” a rebuild.** That removes the chest block from the client; the follow-up Block Change may be treated as unchanged or arrive after the render rebuild, leaving a permanent hole. Likewise, `action` is not 4 for chests: 4 is the skull branch (`alo`), and chests have no special action. Keep `action = 0` and send the TE immediately.
+   - As a safety net, the server re-sends the whole **chunk section** containing each chest at +2 s and +5 s after the chunk (`groundUp = false`, no air, no block changes). This forces `RenderChunk` to rebuild after the client has fully loaded the chunk; the rebuild creates `TileEntityChest` from the block itself. It covers the race where the immediate `0x35` is processed before the client marks the chunk as loaded and is discarded.
 2. **Double chest was two separate 27-slot inventories.** `ChestTrait` used a hardcoded 27-slot window, so the left half looked empty and the right half kept its items.
    - `findChestPartner()` checks the 4 horizontal neighbors and refuses a neighbor that is already paired with another chest.
    - `openChest()` merges both 27-slot arrays into 54 slots and sends `slotCount = 54`; `Window Items` has 90 slots.
@@ -202,6 +205,7 @@ Vanilla limitation worth remembering: 1.8's `BlockChest.canPlaceBlockAt` refuses
 - If the server refuses a placement, it **must** send a `Block Change` with the real server state. The client already predicted the block locally and will keep a ghost block otherwise.
 - Vanilla chest adjacency: `BlockChest.canPlaceBlockAt` refuses a chest that touches two chests or a chest that already touches another chest. The client enforces this before sending the packet; do not expect a place packet for those positions.
 - Click Window's `clickedItem` field is the **client's new cursor item**, not the item to put in the slot. The server must keep its own cursor (`Connection::$cursor`) and recompute slot results.
+- To synchronize the cursor, `Set Slot` must use `windowId = -1`, `slot = -1`. Using the current window id with slot -1 crashes the client with `IndexOutOfBoundsException` (`List.get(-1)`).
 - Every real click should be followed by a full window resync (or carefully matched Set Slots) to avoid client/server divergence.
 - Nibble arrays: even index -> low nibble, odd -> high.
 - `Window Items` packet length can be a multi-byte VarInt; use the existing `Writer`/`Reader` helpers, do not assume a single byte.
@@ -224,6 +228,7 @@ Already performed:
   - closing a double chest writes two correct 27-slot arrays back to `ChestStore`;
   - breaking one half keeps the other half's items;
   - `0x35` payload has the packed BlockPos, action 0, and NBT `id = "Chest"`;
+  - `sendCursor()` emits `Set Slot` with `windowId = -1`, `slot = -1`;
   - a chunk send emits `0x21` first, then one `0x35` per chest, and never an air `Block Change` at a chest position;
   - clicking air next to a chest sends an air block correction and opens the real chest;
   - placing into an occupied position sends the real block state back (ghost cleanup).
