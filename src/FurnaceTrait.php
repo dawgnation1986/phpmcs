@@ -163,7 +163,12 @@ trait FurnaceTrait
         $c->furnace = null;
     }
 
-    /** 点击熔炉界面：0-2 是熔炉槽，3-38 是玩家背包 */
+    /**
+     * 点击熔炉界面。用和箱子同一套 clickedStacks 语义：
+     * 左键整叠交换、右键一半、Shift 在「熔炉 3 格」和「玩家背包」之间搬。
+     * 之前是「直接把格子设成光标的东西」，会吞掉原物品、也拿不回光标，
+     * 玩家看到的就是「点了没反应 / 物品凭空多一个」。
+     */
     private function clickFurnace(Connection $c, int $slot, int $button, int $mode, ?array $cursor): void
     {
         if ($c->furnace === null) {
@@ -173,45 +178,63 @@ trait FurnaceTrait
         if (!isset($this->furnaces[$k])) {
             return;
         }
+        if ($slot < 0 || $slot > 38) {
+            return;
+        }
 
-        if ($slot >= 3 && $slot <= 38) {
-            $inv = 9 + ($slot - 3);
-            $cur = $c->inventory[$inv] ?? null;
-            if ($mode === 1 && $cur !== null) {          // shift：交给背包逻辑
-                $this->clickInventory($c, $inv, $button, $mode, $cursor);
-            } else {
-                // 必须「交换」而不是「覆盖」：直接 $slot = cursor 会把原来那格
-                // 的东西吞掉，玩家看到的就是「东西越拿越多 / 手里凭空多一个」。
-                if ($cursor === null) {
-                    $c->cursor = $cur;
-                    unset($c->inventory[$inv]);
-                } else {
-                    $c->cursor = $cur;
-                    $c->inventory[$inv] = $cursor;
+        // 0-2 熔炉槽，3-38 玩家背包（对应 inventory 9-44）
+        $get = function (int $s) use ($c, $k) {
+            if ($s === 0) { return $this->furnaces[$k]['in']; }
+            if ($s === 1) { return $this->furnaces[$k]['fuel']; }
+            if ($s === 2) { return $this->furnaces[$k]['out']; }
+
+            return $c->inventory[9 + ($s - 3)] ?? null;
+        };
+        $put = function (int $s, ?array $item) use ($c, $k): void {
+            if ($s === 0) { $this->furnaces[$k]['in'] = $item; return; }
+            if ($s === 1) { $this->furnaces[$k]['fuel'] = $item; return; }
+            if ($s === 2) { $this->furnaces[$k]['out'] = $item; return; }
+            $inv = 9 + ($s - 3);
+            if ($item === null) { unset($c->inventory[$inv]); } else { $c->inventory[$inv] = $item; }
+        };
+
+        $current = $get($slot);
+
+        if ($mode === 1 && $current !== null) {
+            // Shift：熔炉槽 <-> 背包
+            $range = $slot < 3 ? [3, 38] : [0, 2];
+            for ($i = $range[0]; $i <= $range[1]; $i++) {
+                if ($get($i) !== null) {
+                    continue;
                 }
+                $put($i, $current);
+                $put($slot, null);
+                $this->saveFurnaces();
+                $this->sendFurnaceWindow($c);
+
+                return;
             }
             $this->sendFurnaceWindow($c);
 
             return;
         }
 
-        if ($slot < 0 || $slot > 2) {
+        if ($mode !== 0 || ($button !== 0 && $button !== 1)) {
             return;
         }
-        $field = ['in', 'fuel', 'out'][$slot];
         if ($slot === 2) {
-            // 输出槽只能取，不能塞
-            if ($cursor === null && $this->furnaces[$k]['out'] !== null) {
-                $c->cursor = $this->furnaces[$k]['out'];
-                $this->furnaces[$k]['out'] = null;
+            // 输出槽只能取，不能放
+            if ($c->cursor === null && $current !== null) {
+                $c->cursor = $current;
+                $put(2, null);
             }
         } else {
-            $c->cursor = $this->furnaces[$k][$field];
-            $this->furnaces[$k][$field] = $cursor;
+            [$next, $newCursor] = self::clickedStacks($current, $c->cursor, $button);
+            $c->cursor = $newCursor;
+            $put($slot, $next);
         }
         $this->saveFurnaces();
         $this->sendFurnaceWindow($c);
-        $this->sendCursor($c);
     }
 
     /** 每 2 秒跑一次烧炼 */
