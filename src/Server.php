@@ -898,6 +898,20 @@ final class Server
                 }
                 break;
 
+            case 0x02: // Use Entity（攻击 / 交互）
+                $targetEid = $r->readVarInt();
+                $action = $r->readByte();
+                if ($action === 1) {          // 1 = 攻击
+                    foreach ($this->players() as $other) {
+                        if ($other !== $c && $other->entityId === $targetEid) {
+                            $this->damage($other, 1);            // 空手 1 点
+                            $this->addExhaustion($c, 0.3);       // 原版：每次攻击 0.3
+                            break;
+                        }
+                    }
+                }
+                break;
+
             case 0x0E: // Click Window
                 // 1.8 顺序：windowId, slot, button, action(short), mode, 手上物品
                 $windowId = $r->readByte();
@@ -2765,6 +2779,7 @@ final class Server
             return;
         }
         $c->health = max(0.0, $c->health - $dmg);
+        $this->addExhaustion($c, 0.3);   // 原版：每次受伤 0.3
         $c->send(self::C_UPDATE_HEALTH, (new Writer())
             ->float($c->health)->varInt($c->food)->float(5.0));
         $this->log("  {$c->username} 掉血 {$dmg}，剩 {$c->health}");
@@ -2908,6 +2923,7 @@ final class Server
                 && $now - $p->lastRegen > 4.0) {
                 $p->lastRegen = $now;
                 $p->health = min(20.0, $p->health + 1.0);
+                $this->addExhaustion($p, 0.6);   // 原版：每回 1 点血消耗 0.6
                 $p->send(self::C_UPDATE_HEALTH, (new Writer())
                     ->float($p->health)->varInt($p->food)->float(5.0));
             }
