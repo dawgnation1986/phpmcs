@@ -34,6 +34,10 @@ final class Connection
     public ?array $textures = null;
     /** @var array{x:int,y:int,z:int,size:int,partner:?array{0:int,1:int,2:int},slots:array}|null 打开着的箱子 */
     public ?array $chest = null;
+
+    /** 区块发完之后要二次补发的箱子坐标（见 sendChunkTo 的注释） */
+    public array $chestFix = [];
+    public float $chestFixAt = 0.0;
     /** @var array{id:int,count:int,damage:int}|null 服务端记录的光标物品 */
     public ?array $cursor = null;
     /** @var array<int,array{id:int,count:int,damage:int}|null> 玩家 2x2 合成格 */
@@ -515,36 +519,27 @@ final class Server
             ->raw($data));
         $c->sentChunks[$cx . ',' . $cz] = true;
 
-        // 区块包只带方块字节，不带瓦片实体。箱子没有 TileEntityChest
-        // 客户端就完全不画；重进世界「箱子消失」就是这个原因。
-        // 光发 0x35 不够：客户端的 handleUpdateTileEntity 是
-        //     TileEntity te = world.getTileEntity(pos);
-        //     if (te != null) te.readFromNBT(...);
-        // 区块刚落地时 TE 不存在，null 被默默丢掉。
-        // 先补一个 Block Change 逼客户端走 setBlockState（它才会 createTileEntity），
-        // 再发 0x35 填数据。
+        // 箱子要单独补，原因有两层：
         //
-        // 而且不能直接发「箱子」状态：客户端 World.setBlockState 里有一句
-        //     if (oldState == newState) return false;
-        // 区块包已经把 54 写进去了，再发一遍 54 会被原地弹回，
-        // createTileEntity 不执行，0x35 还是落到 null 上。
+        // 1) 区块包只写方块字节，不建 TileEntity。客户端 handleUpdateTileEntity
+        //    只对已存在的 TE 读 NBT：te = world.getTileEntity(pos) -> null 就丢。
+        // 2) 光补一个 Block Change 也没用：客户端 World.setBlockState 里有
+        //    `if (oldState == newState) return false;`，区块里已经是 54 了，
+        //    再发 54 会被弹回，createTileEntity 不执行。
         //
-        // 所以先发空气破掉，再发真方块，逼它真的走一遍创建流程。
+        // 所以必须「空气 -> 方块 -> 0x35」三步，而且不能现在发 ——
+        // 区块 86KB，客户端要在 netty 线程解析完才落到主线程应用，
+        // 这几发小包会被随后的区块数据盖掉（玩家看到的就是「服务端有箱子、
+        // 客户端是个洞」）。统一交给 tick 里 1.2 秒后的补刀。
         $chunk = $this->world->chunk($cx, $cz);
         foreach ($chunk->blockPositions(54) as [$x, $y, $z]) {
-            $pos = $this->packPosition($x, $y, $z);
-            $c->send(self::C_BLOCK_CHANGE, (new Writer())->long($pos)->varInt(0));
-            $c->send(self::C_BLOCK_CHANGE, (new Writer())
-                ->long($pos)
-                ->varInt($chunk->blockState($x & 15, $y, $z & 15)));
-            $this->sendTileEntity($c, $x, $y, $z);
+            $c->chestFix[] = [$x, $y, $z];
+        }
+        if ($c->chestFix !== []) {
+            $c->chestFixAt = microtime(true) + 1.2;
         }
     }
 
-    /**
-     * 0x35 Update Tile Entity：BlockPos + action + NBT。
-     * 客户端收到后会用世界里的方块建出 TileEntityChest，再读这份 NBT。
-     */
     private function sendTileEntity(Connection $c, int $x, int $y, int $z): void
     {
         $nbt = Nbt::write(Tag::compound([
@@ -2797,6 +2792,31 @@ final class Server
         }
 
         $this->processDrops();
+
+        // 箱子补刀：进服 1.2 秒后，把之前记下的箱子重新发一遍
+        // （空气 -> 方块 -> 0x35），压过区块数据。
+        foreach ($this->players() as $p) {
+            if ($p->chestFix === [] || $p->chestFixAt <= 0 || $now < $p->chestFixAt) {
+                continue;
+            }
+            $fixed = 0;
+            foreach ($p->chestFix as [$fx, $fy, $fz]) {
+                $st = $this->world->chunk($fx >> 4, $fz >> 4)->blockState($fx & 15, $fy, $fz & 15);
+                if (($st >> 4) !== 54) {
+                    continue;
+                }
+                $pos = $this->packPosition($fx, $fy, $fz);
+                $p->send(self::C_BLOCK_CHANGE, (new Writer())->long($pos)->varInt(0));
+                $p->send(self::C_BLOCK_CHANGE, (new Writer())->long($pos)->varInt($st));
+                $this->sendTileEntity($p, $fx, $fy, $fz);
+                $fixed++;
+            }
+            $p->chestFix = [];
+            $p->chestFixAt = 0.0;
+            if ($fixed > 0) {
+                $this->log("  补发箱子 {$fixed} 个 -> {$p->username}");
+            }
+        }
 
         // 自然回血：生存、饱食度 >= 18、没满血，每 4 秒回 1 点
         foreach ($this->players() as $p) {
