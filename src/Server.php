@@ -801,6 +801,10 @@ final class Server
                     $this->openChest($c, $x, $y, $z);
                     break;
                 }
+                if ($hitId === 54 || ($hitId === 47 && $this->chests->has($x, $y, $z))) {
+                    $this->openChest($c, $x, $y, $z);
+                    break;
+                }
                 if ($hitId === 58) {
                     $this->openWorkbench($c);
                     break;
@@ -862,7 +866,16 @@ final class Server
                     break;
                 }
                 $this->log("  放 方块{$blockId} @ {$tx},{$ty},{$tz}（物品 {$itemId}，点的 {$x},{$y},{$z} 面 {$face}）");
-                $this->changeBlock($tx, $ty, $tz, $blockId, $damage & 0x0F);
+                // 箱子(54)不再真的放进世界：客户端把它设成 BlockContainer 方块
+                // 会在 1.8.9 上抛 NPE，方块状态永远落不了地。
+                // 改成放书架(47) + 在 ChestStore 里留一条记录，右键照样开箱。
+                if ($blockId === 54) {
+                    $this->changeBlock($tx, $ty, $tz, 47, 0);
+                    $this->chests->ensure($tx, $ty, $tz);
+                    $blockId = 47;
+                } else {
+                    $this->changeBlock($tx, $ty, $tz, $blockId, $damage & 0x0F);
+                }
 
                 // 放置成功要扣手里的方块。少了这一步：客户端本地把 13 减成 12，
                 // 下一次整窗重发又推回服务端的 13 —— 玩家看到的就是
@@ -1139,6 +1152,16 @@ final class Server
             }
 
             return;
+        }
+
+        if ($id === 47 && $this->chests->has($x, $y, $z)) {
+            // 书架容器：内容和箱子一样掉出来
+            foreach ($this->chests->load($x, $y, $z) as $item) {
+                if ($item !== null && $item['count'] > 0) {
+                    $this->spawnDrop($x, $y, $z, $item['id'], $item['count'], $item['damage'], $c);
+                }
+            }
+            $this->chests->remove($x, $y, $z);
         }
 
         if ($id === 54) {

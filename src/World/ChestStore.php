@@ -49,6 +49,23 @@ final class ChestStore
         return $out;
     }
 
+    /** 这个坐标有没有容器记录（书架容器靠它区分普通书架）。 */
+    public function has(int $x, int $y, int $z): bool
+    {
+        return isset($this->data[$x . ',' . $y . ',' . $z]);
+    }
+
+    /** 确保该坐标有一条记录（放箱子时调用）。 */
+    public function ensure(int $x, int $y, int $z): void
+    {
+        $key = $x . ',' . $y . ',' . $z;
+        if (isset($this->data[$key])) {
+            return;
+        }
+        $this->data[$key] = array_fill(0, 27, null);
+        @file_put_contents($this->file, json_encode($this->data), LOCK_EX);
+    }
+
     /** 箱子被打掉时清掉记录（原版会 removeTileEntity） */
     public function remove(int $x, int $y, int $z): void
     {

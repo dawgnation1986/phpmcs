@@ -114,6 +114,25 @@ final class AnvilWorld
 
     // ---------------- 区块 ----------------
 
+    /**
+     * 1.8 客户端把某格设成箱子(54)时会走 BlockContainer 分支，在 1.8.9 上抛 NPE，
+     * 方块状态永远落不了地。所以箱子方块统一用书架(47)承载，
+     * 是不是容器由 ChestStore 里的坐标记录决定。
+     * 这里在读区块时一次性把 54 换成 47，随脏区块一起存盘。
+     */
+    private function migrateChests(Chunk $chunk): void
+    {
+        $changed = 0;
+        foreach ($chunk->blockPositions(54) as [$x, $y, $z]) {
+            if ($chunk->setBlock($x, $y, $z, 47, 0)) {
+                $changed++;
+            }
+        }
+        if ($changed > 0) {
+            $this->log("  迁移 {$changed} 个箱子 -> 书架");
+        }
+    }
+
     public function chunk(int $cx, int $cz): Chunk
     {
         $key = $cx . ',' . $cz;
