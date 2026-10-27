@@ -39,6 +39,8 @@ final class Connection
     public array $chestFix = [];
     /** 补发时间点（秒），每次到点发一轮，直到用完 */
     public array $chestFixTimes = [];
+    /** 第几拍：偶数拍发空气，奇数拍发方块 */
+    public int $chestFixStep = 0;
     /** @var array{id:int,count:int,damage:int}|null 服务端记录的光标物品 */
     public ?array $cursor = null;
     /** @var array<int,array{id:int,count:int,damage:int}|null> 玩家 2x2 合成格 */
@@ -539,8 +541,12 @@ final class Server
         if ($c->chestFix !== []) {
             // 分四轮补：客户端区块是一批批加载的，只发一次的话，
             // 发的那一刻目标区块可能还没加载完（world.e(pos)=false），包被丢掉。
+            // 四拍交替：1 拍只发空气，2 拍发方块+0x35，3 拍再发空气，4 拍收尾。
+            // 同一次 flush 里连着发「空气、方块」，客户端只吃到第一个 ——
+            // 玩家看到的就是「闪一下，然后箱子没了」。分开发就稳了。
             $now2 = microtime(true);
-            $c->chestFixTimes = [$now2 + 1.0, $now2 + 2.5, $now2 + 5.0, $now2 + 9.0];
+            $c->chestFixTimes = [$now2 + 1.0, $now2 + 2.0, $now2 + 4.0, $now2 + 8.0];
+            $c->chestFixStep = 0;
         }
     }
 
@@ -2828,6 +2834,10 @@ final class Server
                 continue;
             }
             array_shift($p->chestFixTimes);
+            // 只有第一拍发空气（把客户端的旧状态打掉），后面全是方块+0x35 重试。
+            // 最后一拍绝不能是空气，否则箱子就永久变洞了。
+            $sendAir = $p->chestFixStep === 0;
+            $p->chestFixStep++;
             $fixed = 0;
             foreach ($p->chestFix as [$fx, $fy, $fz]) {
                 $st = $this->world->chunk($fx >> 4, $fz >> 4)->blockState($fx & 15, $fy, $fz & 15);
@@ -2835,9 +2845,12 @@ final class Server
                     continue;
                 }
                 $pos = $this->packPosition($fx, $fy, $fz);
-                $p->send(self::C_BLOCK_CHANGE, (new Writer())->long($pos)->varInt(0));
-                $p->send(self::C_BLOCK_CHANGE, (new Writer())->long($pos)->varInt($st));
-                $this->sendTileEntity($p, $fx, $fy, $fz);
+                if ($sendAir) {
+                    $p->send(self::C_BLOCK_CHANGE, (new Writer())->long($pos)->varInt(0));
+                } else {
+                    $p->send(self::C_BLOCK_CHANGE, (new Writer())->long($pos)->varInt($st));
+                    $this->sendTileEntity($p, $fx, $fy, $fz);
+                }
                 $fixed++;
             }
             if ($p->chestFixTimes === []) {
