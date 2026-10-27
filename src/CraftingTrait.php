@@ -237,7 +237,7 @@ trait CraftingTrait
             $this->log(($workbench ? '工作台' : '2x2') . ' 背包满，合成输出保留');
             if ($workbench) {
                 $this->updateWorkbenchOutput($c);
-                $this->sendCursor($c, 2);
+                $this->sendCursor($c);
             } else {
                 $this->updateCraftOutput($c);
                 $this->sendCursor($c);
@@ -258,7 +258,7 @@ trait CraftingTrait
         if ($workbench) {
             $c->craft9 = $grid;
             $this->updateWorkbenchOutput($c);
-            $this->sendCursor($c, 2);
+            $this->sendCursor($c);
         } else {
             $c->craftGrid = $grid;
             $this->updateCraftOutput($c);
@@ -408,7 +408,7 @@ trait CraftingTrait
         if ($out === null) {
             $this->log('  工作台输出为空 grid=' . json_encode($c->craft9) . ' cursor=' . json_encode($c->cursor));
             $this->updateWorkbenchOutput($c);
-            $this->sendCursor($c, 2);
+            $this->sendCursor($c);
 
             return;
         }
@@ -431,7 +431,7 @@ trait CraftingTrait
             if (!$this->canGive($c, $out['id'], $out['count'], $out['damage'])) {
                 $this->log('  工作台背包满，合成输出保留');
                 $this->updateWorkbenchOutput($c);
-                $this->sendCursor($c, 2);
+                $this->sendCursor($c);
 
                 return;
             }
@@ -447,7 +447,7 @@ trait CraftingTrait
             $this->sendWindowSlot($c, 2, $i + 1, $c->craft9[$i]);
         }
         $this->updateWorkbenchOutput($c);
-        $this->sendCursor($c, 2);
+        $this->sendCursor($c);
     }
 
     private function clickWorkbench(Connection $c, int $slot, int $button, int $mode, ?array $cursor): void
@@ -470,13 +470,13 @@ trait CraftingTrait
                     $this->sendWindowSlot($c, 2, $slot, null);
                     $this->giveItem($c, $it['id'], $it['count'], $it['damage']);
                     $this->updateWorkbenchOutput($c);
-                    $this->sendCursor($c, 2);
+                    $this->sendCursor($c);
                 }
 
                 return;
             }
             if ($mode !== 0 || ($button !== 0 && $button !== 1)) {
-                $this->sendCursor($c, 2);
+                $this->sendCursor($c);
 
                 return;
             }
@@ -485,7 +485,7 @@ trait CraftingTrait
             $c->cursor = $newCursor;
             $this->sendWindowSlot($c, 2, $slot, $next);
             $this->updateWorkbenchOutput($c);
-            $this->sendCursor($c, 2);
+            $this->sendCursor($c);
 
             return;
         }
@@ -502,7 +502,7 @@ trait CraftingTrait
                 $c->inventory[$inv] = $next;
             }
             $this->sendWindowSlot($c, 2, $slot, $next);
-            $this->sendCursor($c, 2);
+            $this->sendCursor($c);
 
             return;
         }
@@ -562,11 +562,11 @@ trait CraftingTrait
                 $slotNo = $invSlot <= 35 ? 10 + ($invSlot - 9) : 37 + ($invSlot - 36);
                 $this->sendWindowSlot($c, 2, $slotNo, $it);
             }
-            $this->sendCursor($c, 2);
+            $this->sendCursor($c);
 
             return;
         }
 
-        $this->sendCursor($c, 2);
+        $this->sendCursor($c);
     }
 }
