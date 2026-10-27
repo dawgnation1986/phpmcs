@@ -1,0 +1,12 @@
+{
+    "parent": "block/cube",
+    "textures": {
+        "particle": "blocks/phpmcs_chest_side",
+        "down": "blocks/phpmcs_chest_top",
+        "up": "blocks/phpmcs_chest_top",
+        "north": "blocks/phpmcs_chest_side",
+        "east": "blocks/phpmcs_chest_side",
+        "south": "blocks/phpmcs_chest_side",
+        "west": "blocks/phpmcs_chest_side"
+    }
+}

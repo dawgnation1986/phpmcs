@@ -808,13 +808,13 @@ final class Server
                     $this->openChest($c, $x, $y, $z);
                     break;
                 }
-                if ($hitId === 49) {
+                if ($hitId === 133) {
                     if ($this->hasFurnace($x, $y, $z)) {
                         $this->openFurnace($c, $x, $y, $z);
                         $this->log("  打开熔炉 {$x},{$y},{$z}");
                     } else {
-                        $this->log("  黑曜石 @ {$x},{$y},{$z} 没有熔炉记录");
-                        $this->sendChat($c, ['text' => '这块黑曜石没有熔炉记录——放一个熔炉试试。', 'color' => 'gray'], 1);
+                        $this->log("  绿宝石块 @ {$x},{$y},{$z} 没有熔炉记录");
+                        $this->sendChat($c, ['text' => '这块绿宝石块没有熔炉记录——放一个熔炉试试。', 'color' => 'gray'], 1);
                     }
                     break;
                 }
@@ -883,8 +883,8 @@ final class Server
                 // 会在 1.8.9 上抛 NPE，方块状态永远落不了地。
                 // 改成放书架(47) + 在 ChestStore 里留一条记录，右键照样开箱。
                 if ($blockId === 61) {
-                    // 用黑曜石(49)承载：深紫黑、一眼能认，也不会被当成建筑方块。
-                    $this->changeBlock($tx, $ty, $tz, 49, 0);
+                    // 用绿宝石块(133)承载：玩家几乎不会拿它盖房，贴图可以放心画成炉子。
+                    $this->changeBlock($tx, $ty, $tz, 133, 0);
                     $this->ensureFurnace($tx, $ty, $tz);
                     $blockId = 49;
                 } elseif ($blockId === 54) {
