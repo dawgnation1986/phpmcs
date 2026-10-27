@@ -2114,6 +2114,29 @@ final class Server
                 $this->sendChat($c, ['text' => "已生成 {$count} 只 " . self::MOB_TYPES[$type][0] . "（实体数 " . count($this->mobs) . '）', 'color' => 'green'], 1);
                 break;
 
+            case 'blocktest':
+                // 最小化 A/B 测试：往你面前 2 格发一个方块，看 F3 认不认
+                //   /blocktest stone   发石头(1<<4=16)
+                //   /blocktest chest   发箱子(864) + 0x35
+                $what = strtolower($parts[0] ?? 'stone');
+                $bx2 = (int) floor($c->x + sin(deg2rad(-$c->yaw)) * 2);
+                $bz2 = (int) floor($c->z + cos(deg2rad(-$c->yaw)) * 2);
+                $by2 = (int) floor($c->y);
+                $posHex = $this->packPositionBytes($bx2, $by2, $bz2);
+                if ($what === 'chest') {
+                    $st = 864;
+                    $c->send(self::C_BLOCK_CHANGE, (new Writer())->raw($posHex)->varInt($st));
+                    $this->sendTileEntity($c, $bx2, $by2, $bz2);
+                    $msg = "发箱子 state=864 + 0x35";
+                } else {
+                    $st = 1 << 4;
+                    $c->send(self::C_BLOCK_CHANGE, (new Writer())->raw($posHex)->varInt($st));
+                    $msg = "发石头 state=16";
+                }
+                $this->sendChat($c, ['text' => "{$msg} @ {$bx2},{$by2},{$bz2}——看 F3 的 Block 行", 'color' => 'aqua'], 1);
+                $this->log("  /blocktest {$what} @ {$bx2},{$by2},{$bz2} state={$st}");
+                break;
+
             case 'timeset':
                 // /timeset <0-23999>：0 早上、6000 中午、13000 日落、18000 午夜
                 if ($arg === '' || !is_numeric($arg)) {
