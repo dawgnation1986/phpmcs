@@ -19,8 +19,8 @@ trait MobTrait
         58 => ['enderman', true, 40, 368, 1],
         65 => ['bat', false, 6, 0, 0],
         90 => ['pig', false, 10, 319, 2],
-        91 => ['sheep', false, 8, 35, 1],
-        92 => ['cow', false, 10, 334, 2],
+        91 => ['sheep', false, 8, 423, 2],
+        92 => ['cow', false, 10, 363, 2],
         93 => ['chicken', false, 4, 365, 1],
         95 => ['wolf', false, 8, 0, 0],
         96 => ['mooshroom', false, 10, 334, 2],
@@ -96,6 +96,11 @@ trait MobTrait
         $this->mobs[$eid]['hp'] -= $dmg;
         $this->mobs[$eid]['lastHit'] = microtime(true);
 
+        // 受击动画：0x1A Entity Status，status=2 是「受伤」
+        foreach ($this->players() as $pp) {
+            $pp->send(self::C_ENTITY_STATUS, (new Writer())->int($eid)->byte(2));
+        }
+
         $m = $this->mobs[$eid];
         $dx = $m['x'] - $attacker->x;
         $dz = $m['z'] - $attacker->z;
@@ -161,15 +166,15 @@ trait MobTrait
                     $dz = $near->z - $m['z'];
                     $dist = sqrt($dx * $dx + $dz * $dz);
                     if ($dist > 1.6 && $dist < 16.0) {
-                        $nx = $m['x'] + $dx / $dist * 0.7;
-                        $nz = $m['z'] + $dz / $dist * 0.7;
+                        $nx = $m['x'] + $dx / $dist * 0.3;
+                        $nz = $m['z'] + $dz / $dist * 0.3;
                     } elseif ($dist <= 2.2 && $now - $m['lastHit'] > 1.5) {
                         $this->damage($near, 1);
                         $this->mobs[$eid]['lastHit'] = $now;
                     }
                 } else {
-                    $nx = $m['x'] + random_int(-7, 7) / 10;
-                    $nz = $m['z'] + random_int(-7, 7) / 10;
+                    $nx = $m['x'] + random_int(-3, 3) / 10;
+                    $nz = $m['z'] + random_int(-3, 3) / 10;
                 }
 
                 if (abs($nx - $m['x']) > 0.001 || abs($nz - $m['z']) > 0.001) {

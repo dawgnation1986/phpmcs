@@ -149,6 +149,7 @@ final class Server
     private const C_DESTROY_ENTITIES = 0x13;
     private const C_SPAWN_MOB = 0x0F;
     private const C_TIME_UPDATE = 0x03;
+    private const C_ENTITY_STATUS = 0x1A;
     private const C_ENTITY_LOOK = 0x16;
     private const C_ENTITY_TELEPORT = 0x18;
     private const C_HEAD_LOOK = 0x19;
