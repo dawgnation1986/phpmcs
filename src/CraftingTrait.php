@@ -64,6 +64,36 @@ trait CraftingTrait
      */
     private static function matchCraft3x3(array $g): ?array
     {
+        // 床：一排 3 个羊毛，正下方一排 3 个木板。
+        // 允许摆在「第 1~2 行」或「第 2~3 行」——之前只认顶两行，
+        // 玩家把羊毛放中间行就匹配不到。
+        for ($row = 0; $row <= 1; $row++) {
+            $used = [];
+            $ok = true;
+            for ($c = 0; $c < 3; $c++) {
+                $top = $g[$row * 3 + $c] ?? null;
+                $bot = $g[($row + 1) * 3 + $c] ?? null;
+                if ($top === null || $top['id'] !== 35 || $bot === null || $bot['id'] !== 5) {
+                    $ok = false;
+                    break;
+                }
+                $used[] = $row * 3 + $c;
+                $used[] = ($row + 1) * 3 + $c;
+            }
+            if (!$ok) {
+                continue;
+            }
+            $extra = 0;
+            for ($i = 0; $i < 9; $i++) {
+                if (!in_array($i, $used, true) && ($g[$i] ?? null) !== null) {
+                    $extra++;
+                }
+            }
+            if ($extra === 0) {
+                return [355, 1];   // 床
+            }
+        }
+
         $minR = 3;
         $maxR = -1;
         $minC = 3;
