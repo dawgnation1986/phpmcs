@@ -3042,16 +3042,18 @@ final class Server
                     if (($by >> 4) !== $sy) {
                         continue;
                     }
-                    // B 方案：客户端建不出 TileEntityChest，箱子方块本身是
-                    // 「透明」的（没有 TE 就没有模型）。与其让它看不见，
-                    // 不如在客户端把这一格画成工作台（58）——能看见、能找回来。
-                    //
-                    // 服务端的方块数据仍然保留是箱子（54），右键时我们查的是
-                    // 自己的世界数据，所以照样会打开真箱子、内容一点不少。
-                    $pos = $this->packPositionBytes($bx, $by, $bz);
+                    // 正确做法（依据客户端源码）：
+                    // 1) 先发 0x35，让客户端 chunk.getTileEntity(pos, IMMEDIATE) 造出
+                    //    TileEntityChest 并放进 loadedTileEntityList；
+                    // 2) 再发一个「同状态」的 0x23。WorldClient.setBlockState 会无条件
+                    //    markBlockRangeForRenderUpdate，而 Chunk.setBlockState 发现 state
+                    //    没变会返回 null —— 方块不动、TE 不删，只触发一次 RenderChunk.rebuild，
+                    //    重建时 TE 才被收进 CompiledChunk，箱子这才画得出来。
+                    // 之前发书架(47<<4) 是错的：换方块会把箱子的 TE 删掉。
+                    $this->sendTileEntity($p, $bx, $by, $bz);
                     $p->send(self::C_BLOCK_CHANGE, (new Writer())
-                        ->raw($pos)
-                        ->varInt(47 << 4));   // 47 书架：储物类方块里唯一不需要 TE 的，一定画得出来
+                        ->raw($this->packPositionBytes($bx, $by, $bz))
+                        ->varInt($chunk->blockState($bx & 15, $by, $bz & 15)));
                     $sent++;
                 }
             }

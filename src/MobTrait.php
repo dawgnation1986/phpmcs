@@ -70,6 +70,9 @@ trait MobTrait
             ->int((int) ($x * 32))->int((int) ($y * 32))->int((int) ($z * 32))
             ->byte(0)->byte(0)->byte(0)
             ->short(0)->short(0)->short(0)
+            // DataWatcher 不能只写终止符：客户端 S0F 会 new DataWatcher(null)，
+            // 空列表直接 NullPointerException，等于生物没生成。
+            ->unsignedByte(0x00)->unsignedByte(0x00)
             ->unsignedByte(0x7F));
     }
 
