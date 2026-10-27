@@ -46,8 +46,6 @@ trait MobTrait
     private float $lastMobSpawn = 0.0;
     private float $lastMobTick = 0.0;
     private float $lastTimeSync = 0.0;
-    /** 箱子补发跑到第几轮了（0 起） */
-    public int $chestFixRound = 0;
 
     private function spawnMob(int $type, float $x, float $y, float $z): int
     {

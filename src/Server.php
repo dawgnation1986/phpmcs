@@ -41,6 +41,8 @@ final class Connection
     public array $chestSections = [];
     /** 段重发时间点（秒） */
     public array $chestSectionTimes = [];
+    /** 箱子补发跑到第几轮了（0 起）：第一轮只造 TE，之后才发 0x23 */
+    public int $chestFixRound = 0;
     /** @var array<int,array{id:int,count:int,damage:int}|null> 玩家 2x2 合成格 */
     public array $craftGrid = [null, null, null, null];
     /** @var array<int,array{id:int,count:int,damage:int}|null> 工作台 3x3 合成格 */
@@ -3054,7 +3056,7 @@ final class Server
                     // 第一轮只造 TE；从第二轮起再发同状态 0x23 触发重建。
                     // 同一 tick 里连着发，重建可能赶在 TE 进列表之前，等于白重建。
                     $this->sendTileEntity($p, $bx, $by, $bz);
-                    if ($p->chestFixRound >= 1) {
+                    if ($p->chestFixRound >= 2) {   // 第 1 轮只造 TE，从第 2 轮起才触发重建
                         $p->send(self::C_BLOCK_CHANGE, (new Writer())
                             ->raw($this->packPositionBytes($bx, $by, $bz))
                             ->varInt($chunk->blockState($bx & 15, $by, $bz & 15)));
