@@ -2085,6 +2085,26 @@ final class Server
                     $this->spawnMob($type, $px + 0.5, (float) $py, $pz + 0.5);
                 }
                 $this->log("  {$c->username} 生成了 {$count} 只 " . self::MOB_TYPES[$type][0]);
+                $this->sendChat($c, ['text' => "已生成 {$count} 只 " . self::MOB_TYPES[$type][0] . "（实体数 " . count($this->mobs) . '）', 'color' => 'green'], 1);
+                break;
+
+            case 'mobtest':
+                // 调试：不管昼夜、不管群系，把 16 种生物在你面前排一排
+                $baseY = (int) floor($c->y);
+                $fx = $c->x + sin(deg2rad(-$c->yaw)) * 5;
+                $fz = $c->z + cos(deg2rad(-$c->yaw)) * 5;
+                $i = 0;
+                $made = 0;
+                foreach (self::MOB_TYPES as $id => [$name, $hostile]) {
+                    $px = (int) floor($fx) + ($i % 4) * 2;
+                    $pz = (int) floor($fz) + intdiv($i, 4) * 2;
+                    $py = $this->groundY($px, $pz, $baseY + 4);
+                    if ($py <= 0) { $py = $baseY; }
+                    if ($this->spawnMob($id, $px + 0.5, (float) $py, $pz + 0.5) > 0) { $made++; }
+                    $i++;
+                }
+                $this->log("  {$c->username} /mobtest 生成了 {$made} 只（当前共 " . count($this->mobs) . '）');
+                $this->sendChat($c, ['text' => "调试：已生成 {$made} 只，站在你前方 5 格", 'color' => 'aqua'], 1);
                 break;
 
             case 'hit':
