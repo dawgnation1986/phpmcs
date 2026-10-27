@@ -2127,11 +2127,16 @@ final class Server
                 $bz2 = (int) floor($c->z + cos(deg2rad(-$c->yaw)) * 2);
                 $by2 = (int) floor($c->y);
                 $posHex = $this->packPositionBytes($bx2, $by2, $bz2);
-                if ($what === 'chest') {
+                if ($what === 'chest' || $what === 'chest35') {
                     $st = 864;
                     $c->send(self::C_BLOCK_CHANGE, (new Writer())->raw($posHex)->varInt($st));
-                    $this->sendTileEntity($c, $bx2, $by2, $bz2);
-                    $msg = "发箱子 state=864 + 0x35";
+                    if ($what === 'chest35') {
+                        // 单独验证 0x35 会不会也炸：chest 只发 0x23，chest35 两个都发
+                        $this->sendTileEntity($c, $bx2, $by2, $bz2);
+                        $msg = '发箱子 state=864 + 0x35';
+                    } else {
+                        $msg = '只发方块状态 state=864（不发 0x35）';
+                    }
                 } else {
                     $st = 1 << 4;
                     $c->send(self::C_BLOCK_CHANGE, (new Writer())->raw($posHex)->varInt($st));
