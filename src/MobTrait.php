@@ -205,7 +205,17 @@ trait MobTrait
             return;
         }
         $biome = $this->biomeAt($x, $z);
-        $types = $this->isNight() ? self::MOB_HOSTILE : (self::BIOME_PASSIVE[$biome] ?? []);
+
+        // 海洋/河流/沙滩/深海这些群系表里没有对应生物，以前就「什么都不刷」。
+        // 现在兜底成最常见的四种家畜，保证任何地形都看得到被动生物。
+        $passive = self::BIOME_PASSIVE[$biome] ?? [90, 91, 92, 93];
+
+        if ($this->isNight()) {
+            // 夜里主要是敌对生物，但留三成给被动生物（原版夜里也会有）
+            $types = random_int(1, 10) <= 3 ? $passive : self::MOB_HOSTILE;
+        } else {
+            $types = $passive;
+        }
         if ($types === []) {
             return;
         }
