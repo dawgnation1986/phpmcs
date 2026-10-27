@@ -124,12 +124,14 @@ trait FurnaceTrait
         $c->cursor = null;
 
         $c->send(self::C_OPEN_WINDOW, (new Writer())
-            // windowId 用 2：同一个玩家同时只会开一个界面，
-            // 而 workbench 用 2 实测能打开；之前用 3，客户端直接无视。
-            ->byte(2)
+            // windowId 用 1：箱子界面用 1 是实测能打开的。
+            // 3 和 2 都试过，客户端都无视。
+            ->byte(1)
             ->string('minecraft:furnace')
             ->string(json_encode(['text' => '熔炉'], JSON_UNESCAPED_UNICODE))
-            ->byte(0));
+            // slotCount 给真实的 39（3 熔炉槽 + 36 背包）。
+            // 之前给 0 是照抄工作台，但工作台是 GUI 特殊分支，熔炉可能要看这个数。
+            ->byte(39));
 
         $this->sendFurnaceWindow($c);
     }
@@ -145,7 +147,7 @@ trait FurnaceTrait
         for ($i = 9; $i <= 44; $i++) {
             $slots[] = $c->inventory[$i] ?? null;
         }
-        $w = (new Writer())->byte(2)->short(count($slots));
+        $w = (new Writer())->byte(1)->short(count($slots));
         foreach ($slots as $it) {
             $w->raw($this->slotBytes($it));
         }

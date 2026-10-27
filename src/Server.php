@@ -995,7 +995,7 @@ final class Server
                     }
                 } elseif ($windowId === 0) {
                     $this->clickInventory($c, $slot, $button, $mode, $cursor);
-                } elseif ($windowId === 3 || ($windowId === 2 && $c->furnace !== null)) {
+                } elseif ($c->furnace !== null && ($windowId === 1 || $windowId === 2 || $windowId === 3)) {
                     $this->clickFurnace($c, $slot, $button, $mode, $cursor);
                 } elseif ($windowId === 1) {
                     $this->clickChest($c, $slot, $button, $mode, $cursor);
