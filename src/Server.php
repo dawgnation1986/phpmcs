@@ -523,10 +523,19 @@ final class Server
         // 区块刚落地时 TE 不存在，null 被默默丢掉。
         // 先补一个 Block Change 逼客户端走 setBlockState（它才会 createTileEntity），
         // 再发 0x35 填数据。
+        //
+        // 而且不能直接发「箱子」状态：客户端 World.setBlockState 里有一句
+        //     if (oldState == newState) return false;
+        // 区块包已经把 54 写进去了，再发一遍 54 会被原地弹回，
+        // createTileEntity 不执行，0x35 还是落到 null 上。
+        //
+        // 所以先发空气破掉，再发真方块，逼它真的走一遍创建流程。
         $chunk = $this->world->chunk($cx, $cz);
         foreach ($chunk->blockPositions(54) as [$x, $y, $z]) {
+            $pos = $this->packPosition($x, $y, $z);
+            $c->send(self::C_BLOCK_CHANGE, (new Writer())->long($pos)->varInt(0));
             $c->send(self::C_BLOCK_CHANGE, (new Writer())
-                ->long($this->packPosition($x, $y, $z))
+                ->long($pos)
                 ->varInt($chunk->blockState($x & 15, $y, $z & 15)));
             $this->sendTileEntity($c, $x, $y, $z);
         }
