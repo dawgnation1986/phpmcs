@@ -35,12 +35,6 @@ final class Connection
     /** @var array{x:int,y:int,z:int,size:int,partner:?array{0:int,1:int,2:int},slots:array}|null 打开着的箱子 */
     public ?array $chest = null;
 
-    /** 区块发完之后要二次补发的箱子坐标（见 sendChunkTo 的注释） */
-    public array $chestFix = [];
-    /** 补发时间点（秒），每次到点发一轮，直到用完 */
-    public array $chestFixTimes = [];
-    /** 第几拍：偶数拍发空气，奇数拍发方块 */
-    public int $chestFixStep = 0;
     /** @var array{id:int,count:int,damage:int}|null 服务端记录的光标物品 */
     public ?array $cursor = null;
     /** @var array<int,array{id:int,count:int,damage:int}|null> 玩家 2x2 合成格 */
@@ -522,31 +516,13 @@ final class Server
             ->raw($data));
         $c->sentChunks[$cx . ',' . $cz] = true;
 
-        // 箱子要单独补，原因有两层：
-        //
-        // 1) 区块包只写方块字节，不建 TileEntity。客户端 handleUpdateTileEntity
-        //    只对已存在的 TE 读 NBT：te = world.getTileEntity(pos) -> null 就丢。
-        // 2) 光补一个 Block Change 也没用：客户端 World.setBlockState 里有
-        //    `if (oldState == newState) return false;`，区块里已经是 54 了，
-        //    再发 54 会被弹回，createTileEntity 不执行。
-        //
-        // 所以必须「空气 -> 方块 -> 0x35」三步，而且不能现在发 ——
-        // 区块 86KB，客户端要在 netty 线程解析完才落到主线程应用，
-        // 这几发小包会被随后的区块数据盖掉（玩家看到的就是「服务端有箱子、
-        // 客户端是个洞」）。统一交给 tick 里 1.2 秒后的补刀。
+        // 区块包只写方块字节，不建 TileEntity。发完立刻补 0x35，
+        // 让客户端在渲染这段区块之前就能拿到箱子实体。
+        // 注意：绝不能先发空气「破状态」—— air 会把区块里已有的箱子方块
+        // 一起打掉，之后补方块也救不回来，玩家看到的就是箱子永久消失。
         $chunk = $this->world->chunk($cx, $cz);
         foreach ($chunk->blockPositions(54) as [$x, $y, $z]) {
-            $c->chestFix[] = [$x, $y, $z];
-        }
-        if ($c->chestFix !== []) {
-            // 分四轮补：客户端区块是一批批加载的，只发一次的话，
-            // 发的那一刻目标区块可能还没加载完（world.e(pos)=false），包被丢掉。
-            // 四拍交替：1 拍只发空气，2 拍发方块+0x35，3 拍再发空气，4 拍收尾。
-            // 同一次 flush 里连着发「空气、方块」，客户端只吃到第一个 ——
-            // 玩家看到的就是「闪一下，然后箱子没了」。分开发就稳了。
-            $now2 = microtime(true);
-            $c->chestFixTimes = [$now2 + 1.0, $now2 + 2.0, $now2 + 4.0, $now2 + 8.0];
-            $c->chestFixStep = 0;
+            $this->sendTileEntity($c, $x, $y, $z);
         }
     }
 
@@ -558,13 +534,12 @@ final class Server
             'y' => Tag::int($y),
             'z' => Tag::int($z),
         ]));
-        // action 不是随便填的：客户端 handleUpdateTileEntity 拿它当类型判别码
-        //   1=刷怪箱 2=命令方块 3=告示牌 4=箱子 5=? 6=?
-        // 填 0 的话 readFromNBT 一次都不会执行，客户端那个 TE 是个没初始化的
-        // 空壳（连 blockType 都没设），箱子就不渲染。
+        // action 只是给少数实体做特殊处理（1 刷怪箱 / 2 命令方块 / 3 告示牌 /
+        // 4 头颅 / 5 / 6），箱子没有特殊分支，填 0 即可。客户端会先按方块
+        // 建出 TileEntityChest，再走这里。
         $c->send(self::C_UPDATE_TILE_ENTITY, (new Writer())
             ->long($this->packPosition($x, $y, $z))
-            ->byte(4)
+            ->byte(0)
             ->raw($nbt));
     }
 
@@ -2826,40 +2801,6 @@ final class Server
         }
 
         $this->processDrops();
-
-        // 箱子补刀：进服 1.2 秒后，把之前记下的箱子重新发一遍
-        // （空气 -> 方块 -> 0x35），压过区块数据。
-        foreach ($this->players() as $p) {
-            if ($p->chestFix === [] || $p->chestFixTimes === [] || $now < $p->chestFixTimes[0]) {
-                continue;
-            }
-            array_shift($p->chestFixTimes);
-            // 只有第一拍发空气（把客户端的旧状态打掉），后面全是方块+0x35 重试。
-            // 最后一拍绝不能是空气，否则箱子就永久变洞了。
-            $sendAir = $p->chestFixStep === 0;
-            $p->chestFixStep++;
-            $fixed = 0;
-            foreach ($p->chestFix as [$fx, $fy, $fz]) {
-                $st = $this->world->chunk($fx >> 4, $fz >> 4)->blockState($fx & 15, $fy, $fz & 15);
-                if (($st >> 4) !== 54) {
-                    continue;
-                }
-                $pos = $this->packPosition($fx, $fy, $fz);
-                if ($sendAir) {
-                    $p->send(self::C_BLOCK_CHANGE, (new Writer())->long($pos)->varInt(0));
-                } else {
-                    $p->send(self::C_BLOCK_CHANGE, (new Writer())->long($pos)->varInt($st));
-                    $this->sendTileEntity($p, $fx, $fy, $fz);
-                }
-                $fixed++;
-            }
-            if ($p->chestFixTimes === []) {
-                $p->chestFix = [];
-            }
-            if ($fixed > 0) {
-                $this->log("  补发箱子 {$fixed} 个 -> {$p->username}（剩 " . count($p->chestFixTimes) . ' 轮）');
-            }
-        }
 
         // 自然回血：生存、饱食度 >= 18、没满血，每 4 秒回 1 点
         foreach ($this->players() as $p) {
