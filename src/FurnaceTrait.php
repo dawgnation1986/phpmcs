@@ -124,9 +124,11 @@ trait FurnaceTrait
         $c->cursor = null;
 
         $c->send(self::C_OPEN_WINDOW, (new Writer())
-            ->byte(3)
+            // windowId 用 2：同一个玩家同时只会开一个界面，
+            // 而 workbench 用 2 实测能打开；之前用 3，客户端直接无视。
+            ->byte(2)
             ->string('minecraft:furnace')
-            ->string(json_encode(['text' => '熔炉']))
+            ->string(json_encode(['text' => '熔炉'], JSON_UNESCAPED_UNICODE))
             ->byte(0));
 
         $this->sendFurnaceWindow($c);
@@ -143,7 +145,7 @@ trait FurnaceTrait
         for ($i = 9; $i <= 44; $i++) {
             $slots[] = $c->inventory[$i] ?? null;
         }
-        $w = (new Writer())->byte(3)->short(count($slots));
+        $w = (new Writer())->byte(2)->short(count($slots));
         foreach ($slots as $it) {
             $w->raw($this->slotBytes($it));
         }
