@@ -2890,7 +2890,7 @@ final class Server
                     $pos = $this->packPositionBytes($bx, $by, $bz);
                     $p->send(self::C_BLOCK_CHANGE, (new Writer())
                         ->raw($pos)
-                        ->varInt((35 << 4) | 12));   // 35:12 棕色羊毛，不需要 TE，一定画得出来
+                        ->varInt(47 << 4));   // 47 书架：储物类方块里唯一不需要 TE 的，一定画得出来
                     $sent++;
                 }
             }
