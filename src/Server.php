@@ -808,8 +808,14 @@ final class Server
                     $this->openChest($c, $x, $y, $z);
                     break;
                 }
-                if ($hitId === 98 && $this->hasFurnace($x, $y, $z)) {
-                    $this->openFurnace($c, $x, $y, $z);
+                if ($hitId === 98) {
+                    if ($this->hasFurnace($x, $y, $z)) {
+                        $this->openFurnace($c, $x, $y, $z);
+                        $this->log("  打开熔炉 {$x},{$y},{$z}");
+                    } else {
+                        $this->log("  石砖 @ {$x},{$y},{$z} 没有熔炉记录");
+                        $this->sendChat($c, ['text' => '这块石砖没有熔炉记录（普通石砖）。放一个熔炉试试。', 'color' => 'gray'], 1);
+                    }
                     break;
                 }
                 if ($hitId === 58) {
@@ -885,7 +891,7 @@ final class Server
                     $this->chests->ensure($tx, $ty, $tz);
                     $blockId = 47;
                 } else {
-                    $this->changeBlock($tx, $ty, $tz, $blockId, $damage & 0x0F);
+                    $this->changeBlock($tx, $ty, $tz, $blockId, $this->placeMeta($c, $blockId, $damage & 0x0F));
                 }
 
                 // 放置成功要扣手里的方块。少了这一步：客户端本地把 13 减成 12，
@@ -1030,6 +1036,38 @@ final class Server
             default:
                 break;
         }
+    }
+
+    /**
+     * 按玩家朝向算放置 meta（原版 onBlockPlacedBy 的逻辑）。
+     * 之前一律用物品的 damage 当 meta，所以原木、楼梯、熔炉全朝一个方向。
+     */
+    private function placeMeta(Connection $c, int $blockId, int $itemMeta): int
+    {
+        // 原木：按视线定轴（竖着 0 / 沿 X 是 4 / 沿 Z 是 8）
+        if ($blockId === 17) {
+            if ($c->pitch > 45.0 || $c->pitch < -45.0) {
+                return 0;
+            }
+            $yaw = deg2rad($c->yaw);
+
+            return abs(sin($yaw)) > abs(cos($yaw)) ? 4 : 8;
+        }
+
+        // 朝向类方块：i = 0 南 / 1 西 / 2 北 / 3 东
+        $i = ((int) floor(fmod($c->yaw, 360.0) / 90.0 + 0.5)) & 3;
+        // 楼梯：面朝玩家（南3 西4 北2 东5 → 取反）
+        $stairs = [2 => 5, 3 => 4, 4 => 2, 5 => 3];
+        $stairIds = [53, 67, 108, 109, 114, 128, 134, 135, 136, 156, 163, 164, 180, 203];
+
+        if (in_array($blockId, $stairIds, true)) {
+            // 原版楼梯 meta = 朝向对面 + 是否倒置(0x4)
+            $facing = [3, 4, 2, 5][$i];
+
+            return ($stairs[$facing] ?? 2) & 0x3;
+        }
+
+        return $itemMeta;
     }
 
     private function changeBlock(int $x, int $y, int $z, int $id, int $meta): void
