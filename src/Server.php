@@ -822,10 +822,9 @@ final class Server
                     // 刷怪蛋：damage 就是生物类型
                     $r->readByte();
                     $eggMeta = $r->readShort();
-                    $type = $eggMeta - 32;      // 刷怪蛋 383:x 对应生物 x+32 的映射不唯一，这里按常见偏移
-                    if (!isset(self::MOB_TYPES[$type])) {
-                        $type = $eggMeta == 50 ? 50 : $type;
-                    }
+                    // 1.8 里刷怪蛋的 damage 直接就是生物 id（EntityList 的 id），
+                    // 没有任何偏移。之前写成 -32，猪蛋(90) 就变成了末影人(58)。
+                    $type = $eggMeta;
                     if (isset(self::MOB_TYPES[$type])) {
                         [$tx, $ty, $tz] = self::offsetByFace($x, $y, $z, $face);
                         $gy = $this->groundY($tx, $tz, $ty + 2);

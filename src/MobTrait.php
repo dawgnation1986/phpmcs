@@ -130,7 +130,7 @@ trait MobTrait
 
     private function tickMobs(float $now): void
     {
-        if ($now - $this->lastMobTick >= 1.0) {
+        if ($now - $this->lastMobTick >= 0.2) {
             $this->lastMobTick = $now;
             foreach ($this->mobs as $eid => $m) {
                 // 注意：不能用 nearestPlayer()，那个是捡东西的近距离判定
@@ -158,15 +158,15 @@ trait MobTrait
                     $dz = $near->z - $m['z'];
                     $dist = sqrt($dx * $dx + $dz * $dz);
                     if ($dist > 1.6 && $dist < 16.0) {
-                        $nx = $m['x'] + $dx / $dist;
-                        $nz = $m['z'] + $dz / $dist;
+                        $nx = $m['x'] + $dx / $dist * 0.7;
+                        $nz = $m['z'] + $dz / $dist * 0.7;
                     } elseif ($dist <= 2.2 && $now - $m['lastHit'] > 1.5) {
                         $this->damage($near, 1);
                         $this->mobs[$eid]['lastHit'] = $now;
                     }
                 } else {
-                    $nx = $m['x'] + random_int(-1, 1);
-                    $nz = $m['z'] + random_int(-1, 1);
+                    $nx = $m['x'] + random_int(-7, 7) / 10;
+                    $nz = $m['z'] + random_int(-7, 7) / 10;
                 }
 
                 if (abs($nx - $m['x']) > 0.001 || abs($nz - $m['z']) > 0.001) {
@@ -177,11 +177,13 @@ trait MobTrait
                     $this->mobs[$eid]['x'] = $nx;
                     $this->mobs[$eid]['y'] = $ny;
                     $this->mobs[$eid]['z'] = $nz;
+                    // 朝向按移动方向算，1.8 的 yaw 是 atan2(-dx, dz)
+                    $yawByte = self::angle(rad2deg(atan2(-($nx - $m['x']), $nz - $m['z'])));
                     foreach ($this->players() as $p) {
                         $p->send(self::C_ENTITY_TELEPORT, (new Writer())
                             ->varInt($eid)
                             ->int((int) ($nx * 32))->int((int) ($ny * 32))->int((int) ($nz * 32))
-                            ->byte(0)->byte(0)->bool(true));
+                            ->byte($yawByte)->byte(0)->bool(true));
                     }
                 }
 
