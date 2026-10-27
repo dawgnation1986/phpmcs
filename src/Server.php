@@ -548,9 +548,13 @@ final class Server
             'y' => Tag::int($y),
             'z' => Tag::int($z),
         ]));
+        // action 不是随便填的：客户端 handleUpdateTileEntity 拿它当类型判别码
+        //   1=刷怪箱 2=命令方块 3=告示牌 4=箱子 5=? 6=?
+        // 填 0 的话 readFromNBT 一次都不会执行，客户端那个 TE 是个没初始化的
+        // 空壳（连 blockType 都没设），箱子就不渲染。
         $c->send(self::C_UPDATE_TILE_ENTITY, (new Writer())
             ->long($this->packPosition($x, $y, $z))
-            ->byte(0)
+            ->byte(4)
             ->raw($nbt));
     }
 
