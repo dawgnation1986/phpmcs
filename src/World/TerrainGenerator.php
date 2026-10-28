@@ -19,10 +19,13 @@ final class TerrainGenerator
     private int $seed;
     /** @var int[] 512 项的 Perlin 排列表 */
     private array $perm = [];
+    /** 群系层（按原版建链，和真存档逐块一致） */
+    private \PhpMc\World\Layer\BiomeLayerProvider $layers;
 
     public function __construct(int $seed)
     {
         $this->seed = $seed;
+        $this->layers = new \PhpMc\World\Layer\BiomeLayerProvider($seed);
 
         // 和 Minecraft 的 NoiseGeneratorPerlin 一样：用 java.util.Random
         // 做 Fisher-Yates 洗牌，同一个种子得到的排列表与原版一致。
@@ -85,7 +88,8 @@ final class TerrainGenerator
 
         $biomes = '';
         $surface = array_fill(0, 256, 0);
-        $biomeGrid = array_fill(0, 256, 1);
+        // 群系直接用原版群系层算出来的结果，不再自己猜
+        $biomeGrid = $this->layers->chunkBiomes($cx, $cz);
 
         // ---------------- 基础地形 ----------------
         for ($z = 0; $z < 16; $z++) {
@@ -93,7 +97,7 @@ final class TerrainGenerator
                 $wx = $cx * 16 + $x;
                 $wz = $cz * 16 + $z;
                 $h = $this->terrainHeightAt($wx, $wz);
-                $biome = $this->biomeAt($wx, $wz, $h);
+                $biome = $biomeGrid[$z * 16 + $x];
                 $surface[$z * 16 + $x] = $h;
                 $biomeGrid[$z * 16 + $x] = $biome;
                 $biomes .= chr($biome);
