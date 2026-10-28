@@ -810,6 +810,16 @@ final class Server
                     $this->openChest($c, $x, $y, $z);
                     break;
                 }
+                // 拉杆(69) / 按钮(77)：右键切换开关位，changeBlock 会自动重算红石
+                if ($hitId === 69 || $hitId === 77) {
+                    $st = $this->world->chunk($x >> 4, $z >> 4)->blockState($x & 15, $y, $z & 15);
+                    $m = ($st & 0x0F) ^ 0x8;
+                    $this->changeBlock($x, $y, $z, $hitId, $m);
+                    $this->log("  {$c->username} " . ($hitId === 69 ? '拉杆' : '按钮')
+                        . (($m & 0x8) ? '打开' : '关闭') . " @ {$x},{$y},{$z}");
+                    break;
+                }
+
                 if ($hitId === 133) {
                     if ($this->hasFurnace($x, $y, $z)) {
                         $this->openFurnace($c, $x, $y, $z);
