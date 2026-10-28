@@ -18,6 +18,9 @@ final class BiomeId
     public const FROZEN_OCEAN = 10;
     public const ICE_PLAINS = 12;
     public const MUSHROOM_ISLAND = 14;
+    public const MUSHROOM_ISLAND_SHORE = 15;
+    public const RIVER = 7;
+    public const FROZEN_RIVER = 11;
     public const EXTREME_HILLS_EDGE = 20;
     public const JUNGLE = 21;
     public const JUNGLE_EDGE = 23;
