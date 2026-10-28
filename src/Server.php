@@ -841,6 +841,35 @@ final class Server
                 }
 
                 $itemId = $r->readShort();
+
+                // 水桶(326) / 岩浆桶(327)：不是方块，单独处理
+                if ($itemId === 326 || $itemId === 327) {
+                    [$fx, $fy, $fz] = self::offsetByFace($x, $y, $z, $face);
+                    $tid = $this->world->chunk($fx >> 4, $fz >> 4)
+                        ->blockState($fx & 15, $fy, $fz & 15) >> 4;
+                    if ($tid === 0) {
+                        $this->placeFluid($fx, $fy, $fz, $itemId === 326 ? 0 : 1);
+                        // 生存模式：桶变成空桶
+                        if ($c->gamemode !== 1) {
+                            $hs = 36 + $c->heldSlot;
+                            $held = $c->inventory[$hs] ?? null;
+                            if ($held !== null && $held['id'] === $itemId) {
+                                if ($held['count'] > 1) {
+                                    $held['count']--;
+                                    $c->inventory[$hs] = $held;
+                                    $this->giveItem($c, 325, 1, 0);
+                                } else {
+                                    $c->inventory[$hs] = ['id' => 325, 'count' => 1, 'damage' => 0];
+                                }
+                                $this->sendInventorySlot($c, $hs, $c->inventory[$hs] ?? null);
+                            }
+                        }
+                        $this->log("  {$c->username} 倒出" . ($itemId === 326 ? '水' : '岩浆')
+                            . " @ {$fx},{$fy},{$fz}");
+                    }
+                    break;
+                }
+
                 if ($itemId === 383) {
                     // 刷怪蛋：damage 就是生物类型
                     $r->readByte();
