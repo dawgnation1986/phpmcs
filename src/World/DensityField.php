@@ -187,23 +187,40 @@ final class DensityField
                 $tx = $fx - $x0;
                 $tz = $fz - $z0;
 
-                $top = 0;
+                $vals = [];
                 for ($y = 0; $y < 33; $y++) {
                     $v00 = $field[($x0 * 5 + $z0) * 33 + $y];
                     $v10 = $field[(($x0 + 1) * 5 + $z0) * 33 + $y];
                     $v01 = $field[($x0 * 5 + $z0 + 1) * 33 + $y];
                     $v11 = $field[(($x0 + 1) * 5 + $z0 + 1) * 33 + $y];
-
                     $v0 = $v00 + ($v10 - $v00) * $tx;
                     $v1 = $v01 + ($v11 - $v01) * $tx;
-                    $v = $v0 + ($v1 - $v0) * $tz;
+                    $vals[$y] = $v0 + ($v1 - $v0) * $tz;
+                }
 
-                    if ($v > 0.0) {
+                // 找最后一个正密度格，再和下一格之间插值出零点
+                $top = -1;
+                for ($y = 32; $y >= 0; $y--) {
+                    if ($vals[$y] > 0.0) {
                         $top = $y;
+                        break;
                     }
                 }
-                // 33 个采样点覆盖 0..255，每格 8 个方块
-                $heights[$zz * 16 + $xx] = $top * 8;
+
+                if ($top < 0) {
+                    $heights[$zz * 16 + $xx] = 0;
+                    continue;
+                }
+                if ($top >= 32) {
+                    $heights[$zz * 16 + $xx] = 256;
+                    continue;
+                }
+
+                $a = $vals[$top];
+                $b = $vals[$top + 1];
+                $frac = ($a - $b) > 0.0 ? $a / ($a - $b) : 0.0;
+                // 第 y 格代表 y*8，往上还有 8 格空间
+                $heights[$zz * 16 + $xx] = (int) round(($top + $frac) * 8.0);
             }
         }
 
