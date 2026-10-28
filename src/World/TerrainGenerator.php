@@ -161,16 +161,54 @@ final class TerrainGenerator
                     continue;
                 }
 
-                // 森林/平原/针叶林/冰原/沼泽/热带草原：草 + 泥土
-                for ($y = 1; $y <= $h - 4; $y++) {
+                // 其余群系走表层规则表：顶层 + 填充层 + 要不要盖雪
+                [$topId, $topMeta, $fillId, $fillMeta, $snow] = SurfaceRules::for($biome);
+                $depth = 3 + ((int) floor(self::hash01($wx, $wz, 0x5EA5) * 2));   // 3~4 格厚
+                for ($y = 1; $y <= $h - $depth - 1; $y++) {
                     $set($x, $y, $z, 1);
                 }
-                for ($y = max(1, $h - 3); $y < $h; $y++) {
-                    $set($x, $y, $z, 3);
+                for ($y = max(1, $h - $depth); $y < $h; $y++) {
+                    $set($x, $y, $z, $fillId, $fillMeta);
                 }
-                $set($x, $h, $z, 2);
+                $set($x, $h, $z, $topId, $topMeta);
+                if ($snow && $h < 127) {
+                    $set($x, $h + 1, $z, 78);   // 雪层
+                }
             }
         }
+
+        // ---------------- 洞穴 ----------------
+        // 只挖石头、且不碰地表以上，避免把草地挖穿变成天坑
+        $carve = function (int $x, int $y, int $z) use (&$sections, $surface): void {
+            if ($x < 0 || $x > 15 || $z < 0 || $z > 15 || $y < 2 || $y > 120) {
+                return;
+            }
+            $idx = $z * 16 + $x;
+            if ($y >= $surface[$idx]) {
+                return;
+            }
+            $sy = $y >> 4;
+            $i = (($y & 15) << 8) | ($z << 4) | $x;
+            if (ord($sections[$sy]['blocks'][$i]) !== 1) {
+                return;
+            }
+            $sections[$sy]['blocks'][$i] = "\x00";
+        };
+        (new CaveCarver($carve))->carveChunk($this->seed, $cx, $cz);
+
+        // ---------------- 矿石 ----------------
+        $putOre = function (int $x, int $y, int $z, int $id) use (&$sections, $surface): void {
+            if ($y >= $surface[$z * 16 + $x]) {
+                return;   // 不在地表以上放
+            }
+            $sy = $y >> 4;
+            $i = (($y & 15) << 8) | ($z << 4) | $x;
+            if (ord($sections[$sy]['blocks'][$i]) !== 1) {
+                return;   // 只替换石头
+            }
+            $sections[$sy]['blocks'][$i] = chr($id & 0xFF);
+        };
+        (new OreDecorator($putOre))->decorate($this->seed, $cx, $cz);
 
         // ---------------- 树 ----------------
         for ($t = 0; $t < 5; $t++) {
