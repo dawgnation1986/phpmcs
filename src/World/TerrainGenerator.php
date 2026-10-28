@@ -177,24 +177,27 @@ final class TerrainGenerator
             }
         }
 
-        // ---------------- 洞穴 ----------------
-        // 只挖石头、且不碰地表以上，避免把草地挖穿变成天坑
-        $carve = function (int $x, int $y, int $z) use (&$sections, $surface): void {
-            if ($x < 0 || $x > 15 || $z < 0 || $z > 15 || $y < 2 || $y > 120) {
-                return;
+        // ---------------- 洞穴（原版 MapGenCaves） ----------------
+        $cx0 = $cx * 16;
+        $cz0 = $cz * 16;
+        $getBlock = function (int $wx, int $wy, int $wz) use (&$sections, $cx0, $cz0): int {
+            $x = $wx - $cx0;
+            $z = $wz - $cz0;
+            if ($x < 0 || $x > 15 || $z < 0 || $z > 15 || $wy < 0 || $wy > 255) {
+                return 0;
             }
-            $idx = $z * 16 + $x;
-            if ($y >= $surface[$idx]) {
-                return;
-            }
-            $sy = $y >> 4;
-            $i = (($y & 15) << 8) | ($z << 4) | $x;
-            if (ord($sections[$sy]['blocks'][$i]) !== 1) {
-                return;
-            }
-            $sections[$sy]['blocks'][$i] = "\x00";
+
+            return ord($sections[$wy >> 4]['blocks'][(($wy & 15) << 8) | ($z << 4) | $x]);
         };
-        (new CaveCarver($carve))->carveChunk($this->seed, $cx, $cz);
+        $setBlock = function (int $wx, int $wy, int $wz, int $id) use (&$sections, $cx0, $cz0): void {
+            $x = $wx - $cx0;
+            $z = $wz - $cz0;
+            if ($x < 0 || $x > 15 || $z < 0 || $z > 15 || $wy < 1 || $wy > 255) {
+                return;
+            }
+            $sections[$wy >> 4]['blocks'][(($wy & 15) << 8) | ($z << 4) | $x] = chr($id & 0xFF);
+        };
+        (new CaveGenerator($this->seed, $getBlock, $setBlock))->generate($this->seed, $cx, $cz);
 
         // ---------------- 矿石 ----------------
         $putOre = function (int $x, int $y, int $z, int $id) use (&$sections, $surface): void {

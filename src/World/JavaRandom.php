@@ -95,7 +95,8 @@ final class JavaRandom
         $hi = $this->next(32);
         $lo = $this->next(32);
 
-        return ($hi << 32) + ($lo & 0xFFFFFFFF);
+        // Java 的 ((long)hi << 32) + lo 会回绕，PHP 直接乘会变 float
+        return LongMath::add(LongMath::mul($hi, 4294967296), $lo & 0xFFFFFFFF);
     }
 
     /** 当前 48 位种子（调试用） */
