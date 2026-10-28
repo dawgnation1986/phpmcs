@@ -26,6 +26,9 @@ final class BiomeId
     public const COLD_TAIGA_HILLS = 31;
     public const MEGA_TAIGA_HILLS = 33;
     public const SAVANNA_PLATEAU = 36;
+    public const COLD_BEACH = 26;
+    public const BEACH = 16;
+    public const STONE_BEACH = 25;
     public const MUSHROOM_ISLAND = 14;
     public const MUSHROOM_ISLAND_SHORE = 15;
     public const RIVER = 7;

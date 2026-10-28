@@ -88,6 +88,40 @@ final class BiomeTable
         return $b === BiomeId::MESA_PLATEAU_F || $b === BiomeId::MESA_PLATEAU;
     }
 
+
+    /** 海洋：普通海 / 深海 / 冰海 */
+    public static function isOceanic(int $id): bool
+    {
+        return $id === BiomeId::OCEAN || $id === BiomeId::DEEP_OCEAN || $id === BiomeId::FROZEN_OCEAN;
+    }
+
+    /** 雪原类（原版 enableSnow 的那几个） */
+    public static function isSnowy(int $id): bool
+    {
+        return in_array($id, [10, 11, 12, 13, 26, 30, 31, 140], true);
+    }
+
+    /** 丛林类（BiomeGenJungle） */
+    public static function isJungle(int $id): bool
+    {
+        return $id === BiomeId::JUNGLE || $id === 22 || $id === BiomeId::JUNGLE_EDGE;
+    }
+
+    /** 台地类（BiomeGenMesa） */
+    public static function isMesa(int $id): bool
+    {
+        return $id === BiomeId::MESA || $id === BiomeId::MESA_PLATEAU || $id === BiomeId::MESA_PLATEAU_F;
+    }
+
+    /** 原版 func_151631_c：丛林边缘允许的邻居 */
+    public static function jungleEdgeOk(int $id): bool
+    {
+        return self::isJungle($id)
+            || $id === BiomeId::FOREST
+            || $id === BiomeId::TAIGA
+            || self::isOceanic($id);
+    }
+
     /** 原版 canBiomesBeNeighbors：同类或任一方是温带，就能相邻 */
     public static function canBeNeighbors(int $a, int $b): bool
     {
