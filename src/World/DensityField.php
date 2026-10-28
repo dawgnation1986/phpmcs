@@ -55,6 +55,9 @@ final class DensityField
                 $rand->nextIntBound(256 - $k);
             }
         }
+        // 原版这里还有个 noiseGen5 = Octaves(rand, 10)，地形主计算没用到，
+        // 但它会消耗随机数 —— 漏掉它，后面 depth 噪声就全偏了（实测整片低 12 格）
+        new NoiseGeneratorOctaves($rand, 10);
         $this->depthNoise = new NoiseGeneratorOctaves($rand, 16);
 
         for ($j = -2; $j <= 2; $j++) {
