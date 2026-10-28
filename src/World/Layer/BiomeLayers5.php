@@ -62,6 +62,7 @@ final class GenLayerHills extends GenLayer
                 if ($k !== 0 && $l >= 2 && ($l - 2) % 29 === 1 && $k < 128) {
                     // 少见变体（+128：向日葵平原 / 花林 等），存在才用
                     $out[$j + $i * $areaWidth] = self::hasVariant($k + 128) ? $k + 128 : $k;
+                    if (getenv('HILLS_DBG')) { echo "{$i},{$j}|{$k}|{$l}|{[($flag ? 1 : 0)]}|{$out[$j + $i * $areaWidth]}\n"; }
                     continue;
                 }
                 if ($this->nextInt(3) === 0 || $flag) {
@@ -101,10 +102,29 @@ final class GenLayerHills extends GenLayer
                     if ($flag && $i1 !== $k) {
                         $i1 = self::hasVariant($i1 + 128) ? $i1 + 128 : $k;
                     }
-                    $out[$j + $i * $areaWidth] = $i1;
+
+                    // 关键：丘陵不是无条件套用的。
+                    // 原版会数四邻里有几个和 k 同族，不足 3 个就保持原群系，
+                    // 免得出现孤零零一块丘陵。这一段我之前整个漏了。
+                    if ($i1 === $k) {
+                        $out[$j + $i * $areaWidth] = $k;
+                    } else {
+                        $n1 = $in[$j + 1 + $i * $w];
+                        $n2 = $in[$j + 2 + ($i + 1) * $w];
+                        $n3 = $in[$j + ($i + 1) * $w];
+                        $n4 = $in[$j + 1 + ($i + 2) * $w];
+                        $same = 0;
+                        foreach ([$n1, $n2, $n3, $n4] as $nv) {
+                            if (BiomeTable::equalOrMesaPlateau($nv, $k)) {
+                                $same++;
+                            }
+                        }
+                        $out[$j + $i * $areaWidth] = $same >= 3 ? $i1 : $k;
+                    }
                 } else {
                     $out[$j + $i * $areaWidth] = $k;
                 }
+                if (getenv('HILLS_DBG')) { echo "{$i},{$j}|{$k}|{$l}|{[($flag ? 1 : 0)]}|{$out[$j + $i * $areaWidth]}\n"; }
             }
         }
 
