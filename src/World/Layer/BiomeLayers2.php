@@ -17,6 +17,15 @@ final class BiomeId
     public const SKY = 9;
     public const FROZEN_OCEAN = 10;
     public const ICE_PLAINS = 12;
+    public const ICE_MOUNTAINS = 13;
+    public const DESERT_HILLS = 17;
+    public const FOREST_HILLS = 18;
+    public const TAIGA_HILLS = 19;
+    public const JUNGLE_HILLS = 22;
+    public const BIRCH_FOREST_HILLS = 28;
+    public const COLD_TAIGA_HILLS = 31;
+    public const MEGA_TAIGA_HILLS = 33;
+    public const SAVANNA_PLATEAU = 36;
     public const MUSHROOM_ISLAND = 14;
     public const MUSHROOM_ISLAND_SHORE = 15;
     public const RIVER = 7;
