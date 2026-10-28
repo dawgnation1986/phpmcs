@@ -73,6 +73,12 @@ final class BiomeLayerProvider
         $this->voronoi->initWorldGenSeed($seed);
     }
 
+    /** 原版 getBiomesForGeneration：10x10，1/4 缩放的群系数组 */
+    public function generationBiomes(int $chunkX, int $chunkZ): array
+    {
+        return $this->voronoi->getInts($chunkX * 4 - 2, $chunkZ * 4 - 2, 10, 10);
+    }
+
     /** @return int[] 256 个群系 id，按 z*16+x 排列 */
     public function chunkBiomes(int $chunkX, int $chunkZ): array
     {
