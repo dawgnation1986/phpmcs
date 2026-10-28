@@ -136,6 +136,7 @@ final class Server
     use MobTrait;
     use FurnaceTrait;
     use FluidTrait;
+    use RedstoneTrait;
 
     public const PROTOCOL = 47;
 
@@ -1162,6 +1163,9 @@ final class Server
                 $this->broadcastBlockChange($x, $y + 1, $z, (175 << 4) | ($meta | 0x8));
             }
         }
+
+        // 邻居更新：让周围连通的红石粉重算强度（放/拆电源、放/拆导线都走这里）
+        $this->updateRedstoneAround($x, $y, $z);
 
         $this->broadcastBlockChange($x, $y, $z, (($id & 0xFF) << 4) | ($meta & 0x0F));
         $this->markSection($x, $y, $z);
@@ -2250,6 +2254,32 @@ final class Server
                 }
                 $this->log("  {$c->username} 生成了 {$count} 只 " . self::MOB_TYPES[$type][0]);
                 $this->sendChat($c, ['text' => "已生成 {$count} 只 " . self::MOB_TYPES[$type][0] . "（实体数 " . count($this->mobs) . '）', 'color' => 'green'], 1);
+                break;
+
+            case 'redtest':
+                // 自检：在你前方摆「红石块 + 6 格导线」，看强度是不是 15,14,13,12,11,10
+                $bx = (int) floor($c->x);
+                $by = (int) floor($c->y) + 2;   // 抬高 2 格，确保是空气
+                $bz = (int) floor($c->z) + 3;
+                $this->changeBlock($bx, $by, $bz, 152, 0);
+                $srcId = $this->world->chunk($bx >> 4, $bz >> 4)->blockState($bx & 15, $by, $bz & 15) >> 4;
+                $this->log("  /redtest 电源格实际 id={$srcId}（应为 152）");
+                for ($i = 1; $i <= 6; $i++) {
+                    $this->changeBlock($bx + $i, $by, $bz, 55, 0);
+                }
+                $this->updateRedstoneAround($bx, $by, $bz);
+                $out = [];
+                for ($i = 1; $i <= 6; $i++) {
+                    $ch = $this->world->chunk(($bx + $i) >> 4, $bz >> 4);
+                    $out[] = $ch->blockState(($bx + $i) & 15, $by, $bz & 15) & 0x0F;
+                }
+                $got = implode(',', $out);
+                $want = '15,14,13,12,11,10';
+                $this->log("  /redtest 得到 {$got}，期望 {$want}");
+                $this->sendChat($c, [
+                    'text' => ($got === $want ? '红石链路正确：' : '红石链路异常：') . $got,
+                    'color' => $got === $want ? 'green' : 'red',
+                ], 1);
                 break;
 
             case 'blocktest':
