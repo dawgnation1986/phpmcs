@@ -21,11 +21,14 @@ final class TerrainGenerator
     private array $perm = [];
     /** 群系层（按原版建链，和真存档逐块一致） */
     private \PhpMc\World\Layer\BiomeLayerProvider $layers;
+    /** 原版密度场（地形高度的来源） */
+    private \PhpMc\World\DensityField $density;
 
     public function __construct(int $seed)
     {
         $this->seed = $seed;
         $this->layers = new \PhpMc\World\Layer\BiomeLayerProvider($seed);
+        $this->density = new \PhpMc\World\DensityField($seed);
 
         // 和 Minecraft 的 NoiseGeneratorPerlin 一样：用 java.util.Random
         // 做 Fisher-Yates 洗牌，同一个种子得到的排列表与原版一致。
@@ -91,12 +94,17 @@ final class TerrainGenerator
         // 群系直接用原版群系层算出来的结果，不再自己猜
         $biomeGrid = $this->layers->chunkBiomes($cx, $cz);
 
+        // 高度用原版密度场算，一个区块算一次
+        $heightMap = $this->density->columnHeights(
+            $this->density->noiseField($cx, $cz, $this->layers->generationBiomes($cx, $cz))
+        );
+
         // ---------------- 基础地形 ----------------
         for ($z = 0; $z < 16; $z++) {
             for ($x = 0; $x < 16; $x++) {
                 $wx = $cx * 16 + $x;
                 $wz = $cz * 16 + $z;
-                $h = $this->terrainHeightAt($wx, $wz);
+                $h = $heightMap[$z * 16 + $x];
                 $biome = $biomeGrid[$z * 16 + $x];
                 $surface[$z * 16 + $x] = $h;
                 $biomeGrid[$z * 16 + $x] = $biome;
