@@ -135,6 +135,7 @@ final class Server
     use CraftingTrait;
     use MobTrait;
     use FurnaceTrait;
+    use FluidTrait;
 
     public const PROTOCOL = 47;
 
@@ -891,6 +892,14 @@ final class Server
                     $this->changeBlock($tx, $ty, $tz, 47, 0);
                     $this->chests->ensure($tx, $ty, $tz);
                     $blockId = 47;
+                } elseif ($blockId === 8 || $blockId === 9) {
+                    // 水：放下源头，然后排队扩散
+                    $this->placeFluid($tx, $ty, $tz, 0);
+                    $blockId = 8;
+                } elseif ($blockId === 10 || $blockId === 11) {
+                    // 岩浆：同上，但只流 3 格
+                    $this->placeFluid($tx, $ty, $tz, 1);
+                    $blockId = 10;
                 } elseif ($blockId === 26) {
                     // 床：两格宽。foot + head 一起放，head 的 meta 加 0x8。
                     $i = ((int) floor(fmod($c->yaw, 360.0) / 90.0 + 0.5)) & 3;
@@ -3148,6 +3157,7 @@ final class Server
         }
 
         $this->processDrops();
+        $this->tickFluids($now);
         $this->tickFurnaces($now);
         $this->tickMobs($now);
 

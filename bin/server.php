@@ -20,6 +20,7 @@ require __DIR__ . '/../src/World/ChestStore.php';
 require __DIR__ . '/../src/ChestTrait.php';
 require __DIR__ . '/../src/MobTrait.php';
 require __DIR__ . '/../src/FurnaceTrait.php';
+require __DIR__ . '/../src/FluidTrait.php';
 require __DIR__ . '/../src/CraftingTrait.php';
 require __DIR__ . '/../src/Skin/Skins.php';
 require __DIR__ . '/../src/Server.php';
