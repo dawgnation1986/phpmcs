@@ -24,15 +24,15 @@ final class TerrainGenerator
     {
         $this->seed = $seed;
 
-        // 用局部 LCG 打乱 0..255，避免动全局 mt_rand，影响掉落随机
+        // 和 Minecraft 的 NoiseGeneratorPerlin 一样：用 java.util.Random
+        // 做 Fisher-Yates 洗牌，同一个种子得到的排列表与原版一致。
+        $rand = new JavaRandom($seed);
         $p = range(0, 255);
-        $s = $seed & 0x7FFFFFFF;
-        for ($i = 255; $i > 0; $i--) {
-            $s = ($s * 1103515245 + 12345) & 0x7FFFFFFF;
-            $j = $s % ($i + 1);
+        for ($i = 0; $i < 256; $i++) {
+            $k = $rand->nextIntBound(256 - $i) + $i;
             $t = $p[$i];
-            $p[$i] = $p[$j];
-            $p[$j] = $t;
+            $p[$i] = $p[$k];
+            $p[$k] = $t;
         }
         $this->perm = array_merge($p, $p);
     }

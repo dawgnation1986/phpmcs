@@ -14,6 +14,7 @@ require __DIR__ . '/../src/Protocol.php';
 require __DIR__ . '/../src/Nbt/Tag.php';
 require __DIR__ . '/../src/Nbt/Nbt.php';
 require __DIR__ . '/../src/World/Chunk.php';
+require __DIR__ . '/../src/World/JavaRandom.php';
 require __DIR__ . '/../src/World/TerrainGenerator.php';
 require __DIR__ . '/../src/World/AnvilWorld.php';
 require __DIR__ . '/../src/World/ChestStore.php';

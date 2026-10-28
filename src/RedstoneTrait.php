@@ -147,6 +147,90 @@ trait RedstoneTrait
             }
         }
 
+        // ③ 导线稳定之后，处理「受电控制」的方块：火把反相、木门开合
+        $this->applyRedstoneConsumers($wires);
+
         $this->redstoneBusy = false;
+    }
+
+    /** 某格周围（六向）最大的红石粉强度 */
+    private function maxNeighborWirePower(int $x, int $y, int $z): int
+    {
+        $best = 0;
+        foreach ([[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]] as [$dx, $dy, $dz]) {
+            $ny = $y + $dy;
+            if ($ny < 0 || $ny > 255) {
+                continue;
+            }
+            $nx = $x + $dx;
+            $nz = $z + $dz;
+            $state = $this->world->chunk($nx >> 4, $nz >> 4)->blockState($nx & 15, $ny, $nz & 15);
+            if (!$this->isRedstoneWire($state >> 4)) {
+                continue;
+            }
+            $best = max($best, $state & 0x0F);
+        }
+
+        return $best;
+    }
+
+    /**
+     * 受电方块：
+     *   红石火把(75 灭 / 76 亮) —— 反相：旁边有电就灭
+     *   木门(64) / 铁门(71)     —— 有电就开（meta 的 0x4 位），上下两格一起
+     */
+    private function applyRedstoneConsumers(array $wires): void
+    {
+        $done = [];
+        foreach ($wires as [$wx, $wy, $wz]) {
+            foreach ([[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]] as [$dx, $dy, $dz]) {
+                $nx = $wx + $dx;
+                $ny = $wy + $dy;
+                $nz = $wz + $dz;
+                if ($ny < 0 || $ny > 255) {
+                    continue;
+                }
+                $key = $nx . ',' . $ny . ',' . $nz;
+                if (isset($done[$key])) {
+                    continue;
+                }
+                $done[$key] = true;
+
+                $state = $this->world->chunk($nx >> 4, $nz >> 4)->blockState($nx & 15, $ny, $nz & 15);
+                $id = $state >> 4;
+                $meta = $state & 0x0F;
+
+                // 火把：旁边有电就灭
+                if ($id === 75 || $id === 76) {
+                    $powered = $this->maxNeighborWirePower($nx, $ny, $nz) > 0;
+                    $wantId = $powered ? 75 : 76;
+                    if ($wantId !== $id) {
+                        $this->changeBlock($nx, $ny, $nz, $wantId, $meta);
+                    }
+                    continue;
+                }
+
+                // 门：有电就开（0x4），上下两格同步
+                if ($id === 64 || $id === 71) {
+                    $powered = $this->maxNeighborWirePower($nx, $ny, $nz) > 0;
+                    $lower = ($meta & 0x8) !== 0 ? $ny - 1 : $ny;
+                    if ($lower < 0) {
+                        continue;
+                    }
+                    $st = $this->world->chunk($nx >> 4, $nz >> 4)->blockState($nx & 15, $lower, $nz & 15);
+                    $lowMeta = $st & 0x0F;
+                    $wantOpen = $powered;
+                    $isOpen = ($lowMeta & 0x4) !== 0;
+                    if ($wantOpen === $isOpen) {
+                        continue;
+                    }
+                    $newLow = $powered ? ($lowMeta | 0x4) : ($lowMeta & ~0x4);
+                    $this->changeBlock($nx, $lower, $nz, $id, $newLow);
+                    if ($lower < 255) {
+                        $this->changeBlock($nx, $lower + 1, $nz, $id, ($newLow & 0x7) | 0x8);
+                    }
+                }
+            }
+        }
     }
 }

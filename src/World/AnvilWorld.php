@@ -525,6 +525,12 @@ final class AnvilWorld
      */
     private ?int $timeOffset = null;
 
+    /** 世界种子（level.dat 的 RandomSeed） */
+    public function seed(): int
+    {
+        return $this->seed;
+    }
+
     public function timeOfDay(): int
     {
         $v = (int) fmod(microtime(true) * 20, 24000.0) + ($this->timeOffset ?? 0);

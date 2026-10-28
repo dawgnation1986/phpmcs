@@ -2266,6 +2266,11 @@ final class Server
                 $this->sendChat($c, ['text' => "已生成 {$count} 只 " . self::MOB_TYPES[$type][0] . "（实体数 " . count($this->mobs) . '）', 'color' => 'green'], 1);
                 break;
 
+            case 'seed':
+                $this->sendChat($c, ['text' => '世界种子：' . $this->world->seed(), 'color' => 'aqua'], 1);
+                $this->log("  {$c->username} 查询种子：" . $this->world->seed());
+                break;
+
             case 'redtest':
                 // 自检：在你前方摆「红石块 + 6 格导线」，看强度是不是 15,14,13,12,11,10
                 $bx = (int) floor($c->x);
