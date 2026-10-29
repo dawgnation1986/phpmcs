@@ -454,9 +454,29 @@ final class AnvilWorld
         }
 
         $root = $chunk->root->value['Level'] ?? null;
-        if ($root instanceof Tag) {
-            $root->value['TileEntities'] = Tag::list(Tag::COMPOUND, $list);
+        if (!$root instanceof Tag) {
+            return;
         }
+
+        // 合并而不是覆盖：真存档里还有告示牌 / 熔炉 / 陷阱箱……
+        // 直接整表替换会把它们抹掉。这里只把「Chest」类型换成我们这份，
+        // 其它 TE 原样保留。
+        $kept = [];
+        $existing = $root->value['TileEntities'] ?? null;
+        if ($existing instanceof Tag) {
+            foreach ($existing->value['items'] ?? [] as $t) {
+                if (!$t instanceof Tag) {
+                    continue;
+                }
+                $id = $t->value['id']->value ?? '';
+                if ($id === 'Chest') {
+                    continue;   // 箱子用我们自己的数据重写
+                }
+                $kept[] = $t;
+            }
+        }
+
+        $root->value['TileEntities'] = Tag::list(Tag::COMPOUND, array_merge($kept, $list));
     }
 
     private function writeChunk(Chunk $chunk): bool

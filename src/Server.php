@@ -869,7 +869,7 @@ final class Server
                     break;
                 }
 
-                if ($hitId === 133) {
+                if ($hitId === 61 || $hitId === 133) {
                     if ($this->hasFurnace($x, $y, $z)) {
                         $this->openFurnace($c, $x, $y, $z);
                         $this->log("  打开熔炉 {$x},{$y},{$z}");
@@ -973,10 +973,13 @@ final class Server
                 // 会在 1.8.9 上抛 NPE，方块状态永远落不了地。
                 // 改成放书架(47) + 在 ChestStore 里留一条记录，右键照样开箱。
                 if ($blockId === 61) {
-                    // 用绿宝石块(133)承载：玩家几乎不会拿它盖房，贴图可以放心画成炉子。
-                    $this->changeBlock($tx, $ty, $tz, 133, 0);
+                    // 真的放熔炉(61)。熔炉的模型是静态的，不像箱子那样依赖 TE 才渲染，
+                    // 所以放下去就应该看得见。（以前用绿宝石块 133 冒充）
+                    $fi = ((int) floor($c->yaw * 4.0 / 360.0 + 0.5)) & 3;
+                    $furnaceMeta = [2, 5, 3, 4][$fi];
+                    $this->changeBlock($tx, $ty, $tz, 61, $furnaceMeta);
                     $this->ensureFurnace($tx, $ty, $tz);
-                    $blockId = 133;   // 必须和上面 changeBlock 的 id 一致，否则扣物品那步会判定失败
+                    $blockId = 61;
                 } elseif ($blockId === 54) {
                     // 真的放箱子(54)，朝向按玩家 yaw 算（原版 BlockChest 的算法）：
                     // 0→北(2) 1→东(5) 2→南(3) 3→西(4)
