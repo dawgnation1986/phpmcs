@@ -590,7 +590,7 @@ final class Server
         // 注意：绝不能先发空气「破状态」—— air 会把区块里已有的箱子方块
         // 一起打掉，之后补方块也救不回来，玩家看到的就是箱子永久消失。
         $chunk = $this->world->chunk($cx, $cz);
-        $chests = $chunk->blockPositions(54);
+        $chests = array_merge($chunk->blockPositions(54), $chunk->blockPositions(146));
         foreach ($chests as [$x, $y, $z]) {
             $this->sendTileEntity($c, $x, $y, $z);
             // 客户端有时在区块还没标成 loaded 时就处理 0x35，TE 建不出来；
@@ -855,7 +855,7 @@ final class Server
                     $this->openChest($c, $x, $y, $z);
                     break;
                 }
-                if ($hitId === 54 || ($hitId === 47 && $this->chests->has($x, $y, $z))) {
+                if (in_array($hitId, [54, 146], true) || ($hitId === 47 && $this->chests->has($x, $y, $z))) {
                     $this->openChest($c, $x, $y, $z);
                     break;
                 }
@@ -980,16 +980,16 @@ final class Server
                     $this->changeBlock($tx, $ty, $tz, 61, $furnaceMeta);
                     $this->ensureFurnace($tx, $ty, $tz);
                     $blockId = 61;
-                } elseif ($blockId === 54) {
-                    // 真的放箱子(54)，朝向按玩家 yaw 算（原版 BlockChest 的算法）：
-                    // 0→北(2) 1→东(5) 2→南(3) 3→西(4)
+                } elseif ($blockId === 54 || $blockId === 146) {
+                    // 箱子(54) / 陷阱箱(146)：真正的方块，朝向按玩家 yaw 算
+                    // （原版 BlockChest 的算法 0→北2 1→东5 2→南3 3→西4）
+                    $chestId = $blockId;    // 记住是哪种箱子
                     $di = ((int) floor($c->yaw * 4.0 / 360.0 + 0.5)) & 3;
                     $chestMeta = [2, 5, 3, 4][$di];
-                    $this->changeBlock($tx, $ty, $tz, 54, $chestMeta);
+                    $this->changeBlock($tx, $ty, $tz, $chestId, $chestMeta);
                     $this->chests->ensure($tx, $ty, $tz);
-                    // TE 立刻发一次，客户端才有东西可画
                     $this->sendTileEntityToAll($tx, $ty, $tz);
-                    $blockId = 54;
+                    $blockId = $chestId;
                 } elseif ($blockId === 8 || $blockId === 9) {
                     // 水：放下源头，然后排队扩散
                     $this->placeFluid($tx, $ty, $tz, 0);
@@ -1238,7 +1238,7 @@ final class Server
         $this->broadcastBlockChange($x, $y, $z, (($id & 0xFF) << 4) | ($meta & 0x0F));
         $this->markSection($x, $y, $z);
 
-        if ($id === 54) {
+        if ($id === 54 || $id === 146) {
             // 新放的箱子要立刻补瓦片实体，否则客户端只有方块、画不出箱子。
             $this->broadcastTileEntity($x, $y, $z);
             // 挨着的箱子也要重发一次，客户端才会重新算双箱子模型。
@@ -1351,7 +1351,7 @@ final class Server
             $this->chests->remove($x, $y, $z);
         }
 
-        if ($id === 54) {
+        if ($id === 54 || $id === 146) {
             // 原版 BlockChest.breakBlock：内容全掉出来，再删掉 TileEntity。
             // 双箱子只掉被打掉的那半边，另一半保留。
             $this->breakChestBlock($c, $x, $y, $z);
@@ -3401,7 +3401,7 @@ final class Server
                 // 客户端 handleUpdateTileEntity 第一句 world.s(pos) 是
                 // getTileEntity(IMMEDIATE)，会当场 createNewTileEntity。
                 $chunk = $this->world->chunk($scx, $scz);
-                foreach ($chunk->blockPositions(54) as [$bx, $by, $bz]) {
+                foreach (array_merge($chunk->blockPositions(54), $chunk->blockPositions(146)) as [$bx, $by, $bz]) {
                     if (($by >> 4) !== $sy) {
                         continue;
                     }
