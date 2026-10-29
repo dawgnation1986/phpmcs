@@ -1,6 +1,6 @@
 # PHPMCS 1.8.9 Server - Handoff Notes
 
-Date: 2026-10-27
+Date: 2026-10-28（地形生成大修见第 10 节）
 Project root: `d:\codextest\bigfish\phpmcs`
 Runtime: PHP 8 (CLI), Windows, single-process `stream_select` server
 
@@ -42,7 +42,9 @@ Not implemented yet: mobs/entity AI, caves/ores/villages/structures, furnace sme
 | `src/Protocol.php` | VarInt, packet reader/writer, packet id constants. |
 | `src/World/AnvilWorld.php` | Region/chunk load/save, generator call, legacy migration, dirty chunk saving. |
 | `src/World/Chunk.php` | Anvil section/nibble decoding, block access, block payload, light. |
-| `src/World/TerrainGenerator.php` | Perlin noise + climate-biome terrain generation. |
+| `src/World/TerrainGenerator.php` | 原版式 3D 密度场地形生成（16 段，y=0..255）+ 表层规则 + 洞穴 + 矿石 + 植被。 |
+| `src/World/DensityField.php` | 1.8 `ChunkProviderGenerate.func_147423_a` 的密度网格移植（5×33×5）。 |
+| `src/World/Layer/*` | 原版群系层（生物群系与真存档逐块一致）。 |
 | `src/World/ChestStore.php` | Persistent chest contents. |
 | `src/Nbt/Tag.php`, `src/Nbt/Nbt.php` | NBT read/write. |
 | `src/Skin/Skins.php` | Mojang skin/texture fetching. |
@@ -182,7 +184,7 @@ Vanilla limitation worth remembering: 1.8's `BlockChest.canPlaceBlockAt` refuses
 
 - Block drop entities: `Spawn Object` uses `data = 1` so the client reads the velocity and draws a parabola; server also sends periodic `Entity Teleport` to align item positions.
 - Anvil nibble order: even indices are in the low nibble; fixed in `Chunk.php`. Legacy generated chunks with wrong order are migrated once based on `LastUpdate`, then marked `phpMcGenerated`.
-- Terrain: value noise replaced by Perlin noise + temperature/humidity biomes (ocean, frozen ocean, beach, plains, forest, desert, taiga, ice plains, swamp, savanna, mountains), rivers, biome-specific trees/cacti/snow/sugar cane.
+- Terrain: 早期版本是自写的 value/Perlin 高度图 + 气候群系；现在已改为原版 1.8 的 3D 密度场（见第 10 节），群系换成原版群系层。旧的高度图代码（`terrainHeightAt()/biomeAt()/fbm()/perlin2()`）已不再被调用，属于死代码，保留未删。
 - Newly generated chunks are marked dirty and saved; old chunks are not regenerated. New biomes appear only in chunks generated after this change.
 
 ## 5. Known issues / limitations
@@ -191,7 +193,7 @@ Vanilla limitation worth remembering: 1.8's `BlockChest.canPlaceBlockAt` refuses
 2. No furnace smelting UI or recipes; furnace block is placeable but not usable yet.
 3. Armor slots are sent but equip logic is not implemented.
 4. No full vanilla recipe set, no brewing/enchanting/anvil.
-5. Terrain is approximate; no caves, ores, villages, strongholds, structures, biome blending.
+5. Terrain 已按原版密度场重写，但仍是“近似”：没有村庄/要塞/矿道/地牢/群系混合平滑，1.8 的 `ChunkProviderGenerate` 也还有地表石块噪声等细节没移植。见第 10 节。
 6. No entity/mob AI; only item entities and other players.
 7. Chunks are uncompressed; network use is high; zlib support is a future optimization.
 8. No online-mode encryption; offline mode only.
@@ -269,4 +271,264 @@ Recommended next tests (WorkBuddy):
 - The decompiled 1.8.9 client/server sources are in `.cache/mcsrv/out` and `.cache/mcsrv/client-out`; use them for protocol/container behavior.
 - The MCP/Searge mapping files are in `.cache/mcsrv/mappings`; `joined.tsrg` there is a 404 placeholder. A real `joined.srg` can be obtained from the MCP 1.8.9 archive if needed.
 
+## 10. 2026-10-28 地形生成大修：进服崩溃 + 大平顶
+
+这一节是本次会话的完整记录：现象、排查思路、根因、改动、试过又回滚的方案、验证结果、遗留风险。下次接手先看这节。
+
+### 10.1 现象一：一进服务器就 disconnect（服务端 Fatal）
+
+日志：
+
+```
+PHP Fatal error: Uncaught TypeError: ord(): Argument #1 ($character)
+must be of type string, null given in .../src/World/TerrainGenerator.php:190
+```
+
+调用链：`TerrainGenerator.php:190` ← `CaveGenerator.php:181` ← `CaveGenerator.php:139` ← `:86` ← `:55`。
+
+### 10.2 崩溃根因
+
+当时 `generate()` 只建了 **8 个 section**（y=0..127）：
+
+```php
+$sections = [];
+for ($sy = 0; $sy < 8; $sy++) { ... }
+```
+
+而洞穴闭包里的 y 上界写的是 255：
+
+```php
+$getBlock = function (int $wx, int $wy, int $wz) use (&$sections, ...): int {
+    ...
+    return ord($sections[$wy >> 4]['blocks'][...]);
+};
+```
+
+`CaveGenerator` 在扫描 17×17 邻居区块的洞穴时会探测到 y≥128（它按 0..255 的整列世界高度算），于是 `$wy >> 4 >= 8`，`$sections[8]` 不存在 → 数组下标未定义 → `ord(null)` → 致命错误 → 客户端掉线。
+
+**结论：不是洞穴算法本身错，是“生成的段数和探测的高度范围不一致”。**
+
+第一版修法是把 `$getBlock/$setBlock` 的上界收窄到 127 并加 `isset()` 兜底。这确实止住了崩溃，但把问题变成了下面的“大平顶”。
+
+### 10.3 现象二：大平顶 / 刀切断崖 / 密集竖柱
+
+用户截图（种子 `-2127652111`）里出现：
+
+- 大片平坦到不自然的顶面，顶部是一刀切的石头；
+- 侧面是密集竖条纹（每列高度差异极大）；
+- 悬空高台、千层饼。
+
+### 10.4 大平顶的两个根因
+
+**根因 A：整列填充把 3D 密度当成了高度图。**
+
+旧流程是：
+
+1. `DensityField::noiseField()` 算出 5×33×5 的密度网格（这一步是对的，移植自原版 `func_147423_a`）；
+2. `DensityField::columnHeights()` 把网格插值成 16×16 的“每列高度”，取法是**这一列最高的正密度格**；
+3. `TerrainGenerator` 从 y=1 一路填到该高度。
+
+原版不是这样：原版把密度网格**三线性插值到每一个方块**，`密度 > 0` 就是石头，`< 0` 就是空气。一整列中间完全可能出现“石头—空气—石头”（悬垂、洞顶、上层孤岛）。用“最高正密度格”当高度再整列填满，等于把所有悬垂和空气层全部填实，形状就变成方方正正的大块。
+
+**根因 B（决定性）：只生成 8 个 section，y>127 的地形被静默丢弃。**
+
+`$set()` 里 `if ($y < 0 || $y > 127) return;`，而密度场在 1.8 的世界高度下经常会给出 128~184 的地表。这些列的高处全被丢掉，剩下的正好停在 y=127 —— 于是每个高地都变成一个**在 y=127 处的绝对水平平顶**。用户截图里的“大平顶”主要就是这个。
+
+实测用户种子 `-2127652111`、7×7 区块：
+
+- 有 **7.0%** 的列地表高度 > 127；
+- 最高 184。
+
+也就是说旧代码把 7% 的地形直接削平了。
+
+### 10.5 最终改动（`src/World/TerrainGenerator.php`）
+
+1. **段数 8 → 16**（y=0..255），和原版 1.8 一致：
+
+```php
+for ($sy = 0; $sy < 16; $sy++) {
+    $sections[$sy] = [
+        'blocks'     => str_repeat("\x00", 4096),
+        'data'       => str_repeat("\x00", 2048),
+        'blockLight' => str_repeat("\x00", 2048),
+        'skyLight'   => str_repeat("\x00", 2048),
+    ];
+}
+```
+
+`$set / $get / $setSky / $setBlock` 的 y 上界统一改为 255；洞穴 `$getBlock` 恢复 0..255，并保留 `isset($sections[$sy]['blocks'][$i])` 兜底（即使将来再改段数也不会 Fatal）。
+
+2. **基础地形改成原版式 3D 逐格填充**，不再用 `columnHeights()`：
+
+```php
+$field = $this->density->noiseField($cx, $cz, $this->layers->generationBiomes($cx, $cz));
+
+// 每列先做 33 层水平双线性插值（y 方向本来就是线性插值，逐格只剩一次 lerp）
+for each ($x, $z):
+    $fx = $x / 4.0; $fz = $z / 4.0;
+    $x0 = (int) floor($fx); $z0 = (int) floor($fz);
+    $tx = $fx - $x0;        $tz = $fz - $z0;
+    for ($y = 0; $y < 33; $y++):
+        $i00 = ($x0 * 5 + $z0) * 33 + $y;          // 与 NoiseGeneratorImproved
+        $i10 = (($x0+1) * 5 + $z0) * 33 + $y;      // 的写入顺序一致：
+        $i01 = ($x0 * 5 + $z0+1) * 33 + $y;        // 索引 = (x*5+z)*33+y
+        $i11 = (($x0+1) * 5 + $z0+1) * 33 + $y;
+        $a0 = lerp(field[i00], field[i10], tx);
+        $a1 = lerp(field[i01], field[i11], tx);
+        $vals[$y] = lerp($a0, $a1, tz);
+    $profiles[$z*16+$x] = $vals;
+```
+
+填充时：
+
+```php
+// 最高正密度层只作为“上界”，避免空转
+for ($y = 32; $y >= 0; $y--) if ($vals[$y] > 0.0) { $h = $y*8 + 8; break; }
+if ($h > 255) $h = 255;
+
+// 逐格判断密度：d = lerp(vals[y>>3], vals[(y>>3)+1], (y&7)/8)
+for ($y = 1; $y <= $h; $y++) {
+    if ($d > 0.0) { $solid[$y] = true; $set($x, $y, $z, 1); }
+}
+
+// 真正的地表 = 这一列最高的实心格（可能远低于 $h，因为中间有空气）
+$topSolid = 最高的 isset($solid[$y]) 的 y;
+```
+
+3. **表层替换只动实心格**。旧代码直接 `$set()`，会把本该是空气的格子填成泥土/沙子（悬垂下方、洞顶上方全被补实）。现在统一走：
+
+```php
+$put = function (int $y, int $id, int $meta = 0) use (&$solid, $set, $x, $z): void {
+    if (isset($solid[$y])) $set($x, $y, $z, $id, $meta);
+};
+```
+
+水只填 `!isset($solid[$y])` 的格子，所以水下洞穴、崖壁不会被水灌满。
+
+4. **所有上限同步到 255 / 16**：
+
+| 位置 | 改动 |
+|---|---|
+| 雪层 | `if ($snow && $h < 255)` |
+| 树 | `if ($h + $th + 2 > 255) continue;` |
+| HeightMap 扫描 | `for ($y = 255; $y >= 0; $y--)` |
+| 天空光 | `for ($y = $heights[...]; $y < 256; $y++) $setSky(..., 15);` |
+| 输出 section | `for ($sy = 0; $sy < 16; $sy++)` |
+
+5. **`DensityField.php` 回滚为原状**：`noiseField()` 保持原版公式，`columnHeights()` 保留但 `generate()` 已不再调用（死代码，未删，避免影响其它地方引用）。
+
+### 10.6 试过但回滚的方案（别再来一遍）
+
+1. **`columnHeights()` 改成“从下往上第一个 正→负 界面”**
+   - 想法：第一个界面通常就是真正的地表，可以避开上层悬垂。
+   - 结果：chunk(0,0) 出现 17 格的人造断崖，比原来更糟。原因是一列里“第一个界面”可能是洞穴顶而不是地表。
+2. **混合算法：`top >= 16` 时回退到“最高正格”**
+   - 结果：低处仍然有孤岛，且高处的平顶照旧。既没有统一逻辑，也没有解决问题。
+3. **把 `$set` 上限从 127 放到 255 但保留整列填充**
+   - 结果：大平顶消失，但变成 128~184 的“实心巨柱”，悬垂全没，形状更假。
+
+**最终结论：唯一正确的做法是按原版逐格判断密度，高度图那条路走不通。** 因此所有基于 `columnHeights()` 的修补都被丢弃。
+
+### 10.7 验证结果
+
+- `php -l src/World/TerrainGenerator.php` 等修改文件全部通过。
+- 种子 `-2127652111` 连续生成 7×7 = 49 个区块，无任何 PHP 错误/警告：
+  - 约 **191 ms/区块**，总计 9.36 s；
+  - chunk(0,0) 输出包含 sections 0..8（section 8 的存在证明 >127 的地形不再被丢弃）；
+  - 高度分布：7.0% 的列 > 127，最高 184，与密度场一致。
+- 临时测试脚本已全部清理（`%TEMP%\mc*.php`）。
+- `Chunk::payload()` 本身支持 `0..15` 段（`if ($sy < 0 || $sy > 15) continue;`），16 段可以直接发送；`AnvilWorld` 里没有 8/127 的硬编码，存盘/重载不需要改。
+
+### 10.8 遗留风险 / 未验证项
+
+1. **用户尚未用新世界实测**。必须**新建世界**才看得到效果 —— 旧存档的区块已经写盘，不会重新生成。
+2. 陡壁和竖条纹有一部分来自密度场本身的水平梯度（chunk(0,0) 相邻列高差可达 35 格）。原版同一位置也会有陡崖，但本实现没有 1.8 的“地表石块噪声”和群系混合平滑，观感仍会比原版锐利。要彻底对齐需逐块与原版同种子比对。
+3. 尚未在真实客户端验证：16 段区块的 `0x21` 发送、光照、以及重新登录后从 `.mca` 读回。
+4. 性能：191 ms/区块偏慢。瓶颈在密度场采样（`NoiseGeneratorOctaves` 的 5×33×5×多倍频），不在逐格 lerp。若要优化，可先做 `NoiseGeneratorImproved` 的逐块缓存或整块生成。
+5. 已确认但本轮未动的问题（另开任务）：
+   - `src/Server.php` L3052-3055 的 `47 << 4` 书架 hack；
+   - `src/MobTrait.php` 发送 `S0F` 空 DataWatcher 导致客户端 NPE；
+   - 箱子重进不渲染（应改用同状态 `0x23` 强制重建，而不是发空气 Block Change）。
+
 End of handoff.
+
+## 11. 2026-10-29 箱子终于能看见了（根因 + 修法）
+
+用户反馈：「放置出来还是书架」。之前的记录把原因归到「1.8 客户端 TE 渲染问题」，
+其实不是 —— **是服务端自己在三个地方把箱子当书架处理**。
+
+### 11.1 三个错处（按发现顺序）
+
+1. **放置时写的是书架**（真正的主因）
+   `src/Server.php` 的放置分支：
+   ```php
+   } elseif ($blockId === 54) {
+       $this->changeBlock($tx, $ty, $tz, 47, 0);   // 47 = 书架
+       $this->chests->ensure($tx, $ty, $tz);
+       $blockId = 47;
+   }
+   ```
+   世界里存的本来就是书架，客户端当然画书架；右键能开箱是因为服务端按坐标查 ChestStore。
+
+2. **重进时补发的方块状态也是书架**
+   `sendChunkTo()` 里的「补发」逻辑发 `47 << 4`。已改成发世界里的真实
+   blockState（54 + 朝向 meta）。
+
+3. **`migrateChests()` 是死代码**
+   注释说「读区块时把 54 换成 47」，但它从来没被调用。留着无害，别再当它是原因。
+
+### 11.2 正确做法
+
+```php
+$di = ((int) floor($c->yaw * 4.0 / 360.0 + 0.5)) & 3;   // 原版 BlockChest 算法
+$chestMeta = [2, 5, 3, 4][$di];                          // 北/东/南/西
+$this->changeBlock($tx, $ty, $tz, 54, $chestMeta);
+$this->chests->ensure($tx, $ty, $tz);
+$this->sendTileEntityToAll($tx, $ty, $tz);                // 0x35
+```
+
+### 11.3 顺带把 TE 存进区块 NBT
+
+按 ChatGPT 那份《箱子 TE 数据讨论》的核心结论改的：
+**方块状态和 Tile Entity 必须一起保存**。
+
+原来箱子方块在 `.mca` 的 Blocks 里、物品在 `cache/chests-*.json` 里，两份独立。
+区块一旦被重写，方块没了但 JSON 还在 → 「箱子消失、重放一个旧物品又回来」。
+
+现在：
+- `AnvilWorld::injectChestTiles()` 写区块前生成 `Level.TileEntities`
+  （id/x/y/z/Items，原版格式）
+- `importChestTiles()` 读区块后把 TE 物品导入 ChestStore（已有则跳过）
+- `markChunkDirty()` 箱子内容变了标脏（ChestTrait 4 处 save 都补了）
+
+验证：换全新的空 JSON，只靠 `.mca` 能恢复「方块 54 + 槽0 石头x64 + 槽3 钻石x7」。
+
+### 11.4 地形：密度场用错了群系层（同日修复）
+
+`generationBiomes()` 原来是 `voronoi->getInts($cx*4-2, ...)` —— **坐标按 1:4 算、
+层却是 1:1 的 voronoi**，等于在完全不同的区域取群系。原版是：
+
+| 层 | 用途 | 比例 |
+|---|---|---|
+| `genBiomes` = riverMix | 地形密度加权 | 1 格 = 4 方块 |
+| `biomeIndexLayer` = voronoi | 客户端显示 / 存盘 Biomes | 1 格 = 1 方块 |
+
+改对之后海里的浮空陆地、森林里的石壁全消失。
+
+### 11.5 还没解决的
+
+- 和 `world_real`（真 1.8 存档，seed 5822312952726424627）比高度：
+  平均差 4.9 格（chunk 0,0）/ 6.9 格（chunk -1,0）。密度场和填充循环都验证过
+  和 Java 逐值一致，所以差在**喂进去的群系数组**或某个还没移植的细节。
+- 偶发「1 格悬空土柱」：比如 chunk(-8,-9) 的 (0,0) 列，
+  0-58 实心 → 58-164 全空 → 164-169 悬空一块。Java 用同样的输入也算出 169，
+  说明不是填充逻辑错，而是输入（群系/噪声参数）导致密度在那一列有正密度口袋。
+
+### 11.6 可复用的验证工具
+
+| 工具 | 用途 |
+|---|---|
+| `.cache/jtest/Field.java` | 用原版噪声类 + 原版填充循环算 16×16 高度（基准） |
+| `.cache/jtest/Field2.java` | 同上，可指定区块 `java Field2 -8 -9` |
+| `.cache/jtest/mccls/` | 编译好的原版噪声类 |
+| `.cache/pmmp/` | PocketMine-MP 源码（对照 tile 生命周期用） |
