@@ -47,6 +47,11 @@ final class AnvilWorld
             $this->created = true;
             $this->ensureSkeleton();
             $this->writeLevelDat();
+            $this->ensureStructureFiles();
+            @copy(
+                $this->dir . DIRECTORY_SEPARATOR . 'level.dat',
+                $this->dir . DIRECTORY_SEPARATOR . 'level.dat_old'
+            );
         }
         $this->seed = Nbt::int($this->data(), 'RandomSeed', 0);
         $this->generator = new TerrainGenerator($this->seed);
@@ -70,6 +75,21 @@ final class AnvilWorld
                 0777,
                 true
             );
+        }
+    }
+
+    /**
+     * 原版的 data/ 下有几个结构表，即使没有村庄也会存在。
+     * 这里补空的，让存档目录结构跟原版一致，外部工具能正常读。
+     */
+    private function ensureStructureFiles(): void
+    {
+        $empty = Tag::compound(['Valid' => Tag::byte(1)]);
+        foreach (['villages.dat', 'villages_end.dat', 'villages_nether.dat'] as $name) {
+            $path = $this->dir . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . $name;
+            if (!is_file($path)) {
+                @file_put_contents($path, Nbt::writeGzip($empty));
+            }
         }
     }
 
@@ -129,7 +149,7 @@ final class AnvilWorld
             }
         }
         if ($changed > 0) {
-            $this->log("  迁移 {$changed} 个箱子 -> 书架");
+            error_log("[phpmcs]   迁移 {$changed} 个箱子 -> 书架");
         }
     }
 
@@ -310,8 +330,18 @@ final class AnvilWorld
     }
 
     /** 把脏区块写回去，返回写了几个。 */
+    /** 上次写 level.dat 的时间（节流用） */
+    private float $levelSavedAt = 0.0;
+
     public function save(): int
     {
+        // 原版保存时会重写 level.dat（并把旧的留成 level.dat_old）。
+        // 我们的 save() 每 2 秒跑一次，没必要这么勤，30 秒写一次就够。
+        if (microtime(true) - $this->levelSavedAt > 30.0) {
+            $this->writeLevelDat();
+            $this->levelSavedAt = microtime(true);
+        }
+
         $n = 0;
         foreach ($this->chunks as $chunk) {
             if (!$chunk->dirty) {
@@ -419,6 +449,10 @@ final class AnvilWorld
     private function writeLevelDat(): void
     {
         $path = $this->dir . DIRECTORY_SEPARATOR . 'level.dat';
+        // 原版每次保存前把旧的 level.dat 备份成 level.dat_old
+        if (is_file($path)) {
+            @copy($path, $this->dir . DIRECTORY_SEPARATOR . 'level.dat_old');
+        }
         if (file_put_contents($path, Nbt::writeGzip($this->level), LOCK_EX) === false) {
             throw new \RuntimeException("写 level.dat 失败: {$path}");
         }
@@ -598,11 +632,86 @@ final class AnvilWorld
     }
 
     /** @param array<int, array{id:int,count:int,damage:int}> $inv */
+    /** 离线 UUID（和 Server::offlineUuid 同一套算法）*/
+    private function offlineUuid(string $name): string
+    {
+        $h = md5('OfflinePlayer:' . $name, true);
+        $h[6] = chr((ord($h[6]) & 0x0F) | 0x30);
+        $h[8] = chr((ord($h[8]) & 0x3F) | 0x80);
+        $hex = bin2hex($h);
+
+        return substr($hex, 0, 8) . '-' . substr($hex, 8, 4) . '-' . substr($hex, 12, 4)
+            . '-' . substr($hex, 16, 4) . '-' . substr($hex, 20, 12);
+    }
+
+    /**
+     * 额外写一份原版格式的玩家存档：playerdata/<uuid>.dat。
+     * 背包的正本还是 .phpmcs_players.json（服务端自己读），
+     * 这里只是让目录结构跟原版对齐，外部工具（地图/编辑器）能读到人。
+     */
+    private function writePlayerDat(string $name, array $rec): void
+    {
+        $uuid = $this->offlineUuid($name);
+        $dir = $this->dir . DIRECTORY_SEPARATOR . 'playerdata';
+        @mkdir($dir, 0777, true);
+
+        $items = [];
+        foreach (($rec['inv'] ?? []) as $slot => $it) {
+            if (!is_array($it) || !isset($it['id']) || (int) ($it['count'] ?? 0) <= 0) {
+                continue;
+            }
+            $items[] = Tag::compound([
+                'Slot' => Tag::byte((int) $slot),
+                'id' => Tag::short((int) $it['id']),
+                'Count' => Tag::byte((int) $it['count']),
+                'Damage' => Tag::short((int) ($it['damage'] ?? 0)),
+            ]);
+        }
+
+        $root = Tag::compound([
+            'Inventory' => Tag::list(Tag::COMPOUND, $items),
+            'Pos' => Tag::list(Tag::DOUBLE, [
+                Tag::double((float) ($rec['x'] ?? 0)),
+                Tag::double((float) ($rec['y'] ?? 64)),
+                Tag::double((float) ($rec['z'] ?? 0)),
+            ]),
+            'Rotation' => Tag::list(Tag::FLOAT, [
+                Tag::float((float) ($rec['yaw'] ?? 0)),
+                Tag::float((float) ($rec['pitch'] ?? 0)),
+            ]),
+            'Health' => Tag::float(20.0),
+            'foodLevel' => Tag::int(20),
+            'XpLevel' => Tag::int(0),
+            'XpTotal' => Tag::int(0),
+            'playerGameType' => Tag::int(1),
+            'Dimension' => Tag::int(0),
+            'OnGround' => Tag::byte(1),
+        ]);
+
+        @file_put_contents(
+            $dir . DIRECTORY_SEPARATOR . $uuid . '.dat',
+            Nbt::writeGzip(Tag::compound(['' => $root]))
+        );
+
+        // stats/<uuid>.json —— 原版放统计，这里给一份最小的合法 JSON
+        $statsDir = $this->dir . DIRECTORY_SEPARATOR . 'stats';
+        @mkdir($statsDir, 0777, true);
+        $statsPath = $statsDir . DIRECTORY_SEPARATOR . $uuid . '.json';
+        if (!is_file($statsPath)) {
+            @file_put_contents($statsPath, json_encode([
+                'stat.leaveGame' => 0,
+                'stat.playOneMinute' => 0,
+                'stat.walkOneCm' => 0,
+            ], JSON_PRETTY_PRINT));
+        }
+    }
+
     public function rememberInventory(string $name, array $inv): void
     {
         $key = strtolower($name);
         $pos = $this->playerPositions();
         $pos[$key] = array_merge($pos[$key] ?? [], ['inv' => $inv]);
+        $this->writePlayerDat($name, $pos[$key]);
         $this->playerPos = $pos;
         @file_put_contents(
             $this->posFile(),

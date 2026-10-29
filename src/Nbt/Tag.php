@@ -44,6 +44,21 @@ final class Tag
         return new self(self::BYTE, $v);
     }
 
+    public static function short(int $v): self
+    {
+        return new self(self::SHORT, $v);
+    }
+
+    public static function float(float $v): self
+    {
+        return new self(self::FLOAT, $v);
+    }
+
+    public static function double(float $v): self
+    {
+        return new self(self::DOUBLE, $v);
+    }
+
     public static function int(int $v): self
     {
         return new self(self::INT, $v);
