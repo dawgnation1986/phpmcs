@@ -3402,9 +3402,16 @@ final class Server
                     // 右键查的是我们自己的世界数据，开箱/存取完全不受影响。
                     // 书架是储物类方块里唯一不需要 TE 的，一定画得出来。
                     $this->sendTileEntity($p, $bx, $by, $bz);
+                    // 发真实方块状态（54 = 箱子），不再用书架伪装。
+                    // 之前退回书架是因为「箱子画不出来」，但那会儿地形本身就是坏的，
+                    // 现在地形修好了，先按标准做法来：真方块 + TE + 触发重建。
+                    $st = $this->world->chunk($bx >> 4, $bz >> 4)->blockState($bx & 15, $by, $bz & 15);
+                    if (($st >> 4) !== 54) {
+                        $st = 54 << 4;   // 兜底：读不到就按朝北的箱子发
+                    }
                     $p->send(self::C_BLOCK_CHANGE, (new Writer())
                         ->raw($this->packPositionBytes($bx, $by, $bz))
-                        ->varInt(47 << 4));   // 47 = 书架
+                        ->varInt($st));
                     if ($p->chestFixRound === 1 && !$p->chestHinted) {
                         $p->chestHinted = true;
                         $this->sendChat($p, [
