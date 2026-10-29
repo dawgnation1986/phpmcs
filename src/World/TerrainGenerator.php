@@ -43,6 +43,9 @@ final class TerrainGenerator
         $this->perm = array_merge($p, $p);
     }
 
+    /** 测试用：设了就用这个 10x10 群系数组代替 generationBiomes() */
+    public array $biomeOverride = [];
+
     /** 只查群系，不生成地形（/findbiome 用） */
     /** 一块矩形区域的群系（一次算完，比逐区块快几十倍） */
     public function biomeArea(int $x, int $z, int $w, int $h): array
@@ -149,7 +152,10 @@ final class TerrainGenerator
         // 悬垂和自然过渡全部填实，变成大平顶和刀切断崖。
         // 这里先把每列的 33 层水平插值算好（y 方向的插值是线性的），
         // 逐格填充时就只剩一次 lerp，比每格重算 8 个角点快数倍。
-        $field = $this->density->noiseField($cx, $cz, $this->layers->generationBiomes($cx, $cz));
+        $bio10 = $this->biomeOverride !== []
+            ? $this->biomeOverride
+            : $this->layers->generationBiomes($cx, $cz);
+        $field = $this->density->noiseField($cx, $cz, $bio10);
         $profiles = [];
         for ($z = 0; $z < 16; $z++) {
             for ($x = 0; $x < 16; $x++) {

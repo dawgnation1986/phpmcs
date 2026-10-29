@@ -41,7 +41,8 @@ final class BiomeHeights
         1 => 'LowPlains',          // BiomeGenPlains 构造函数
         2 => 'LowPlains',
         3 => 'MidHills',
-        4 => 'MidPlains',
+        // 4 森林：BiomeGenForest 只调 super(id)，用 height_Default = (0.1, 0.2)
+        // 之前错写成 MidPlains(0.2, 0.2)，基准高度多一倍，地形整体偏高
         5 => 'MidPlains',
         6 => 'PartiallySubmerged',
         7 => 'ShallowWaters',
