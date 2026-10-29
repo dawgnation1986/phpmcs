@@ -45,9 +45,9 @@ final class TerrainGenerator
 
     public function generate(int $cx, int $cz): Tag
     {
-        // 只生成 y=0..127，够放下最高地形和树冠
+        // 生成 y=0..255，和原版 1.8 一样是 16 个 section
         $sections = [];
-        for ($sy = 0; $sy < 8; $sy++) {
+        for ($sy = 0; $sy < 16; $sy++) {
             $sections[$sy] = [
                 'blocks' => str_repeat("\x00", 4096),
                 'data' => str_repeat("\x00", 2048),
@@ -57,7 +57,7 @@ final class TerrainGenerator
         }
 
         $set = function (int $x, int $y, int $z, int $id, int $meta = 0) use (&$sections): void {
-            if ($y < 0 || $y > 127) {
+            if ($y < 0 || $y > 255) {
                 return;
             }
             $sy = $y >> 4;
@@ -70,14 +70,14 @@ final class TerrainGenerator
                 : (($b & 0xF0) | ($meta & 0x0F)));
         };
         $get = function (int $x, int $y, int $z) use (&$sections): int {
-            if ($y < 0 || $y > 127) {
+            if ($y < 0 || $y > 255) {
                 return 0;
             }
 
             return ord($sections[$y >> 4]['blocks'][(($y & 15) << 8) | ($z << 4) | $x]);
         };
         $setSky = function (int $x, int $y, int $z, int $v) use (&$sections): void {
-            if ($y < 0 || $y > 127) {
+            if ($y < 0 || $y > 255) {
                 return;
             }
             $sy = $y >> 4;
@@ -94,84 +94,181 @@ final class TerrainGenerator
         // 群系直接用原版群系层算出来的结果，不再自己猜
         $biomeGrid = $this->layers->chunkBiomes($cx, $cz);
 
-        // 高度用原版密度场算，一个区块算一次
-        $heightMap = $this->density->columnHeights(
-            $this->density->noiseField($cx, $cz, $this->layers->generationBiomes($cx, $cz))
-        );
+        // 密度场：5x33x5 网格。原版是把这张网格三线性插值到每个方块，
+        // 密度 > 0 就是石头；不是先算一个高度再整列填满。整列填满会把
+        // 悬垂和自然过渡全部填实，变成大平顶和刀切断崖。
+        // 这里先把每列的 33 层水平插值算好（y 方向的插值是线性的），
+        // 逐格填充时就只剩一次 lerp，比每格重算 8 个角点快数倍。
+        $field = $this->density->noiseField($cx, $cz, $this->layers->generationBiomes($cx, $cz));
+        $profiles = [];
+        for ($z = 0; $z < 16; $z++) {
+            for ($x = 0; $x < 16; $x++) {
+                $fx = $x / 4.0;
+                $fz = $z / 4.0;
+                $x0 = (int) floor($fx);
+                $z0 = (int) floor($fz);
+                $tx = $fx - $x0;
+                $tz = $fz - $z0;
+                $vals = [];
+                for ($y = 0; $y < 33; $y++) {
+                    $i00 = ($x0 * 5 + $z0) * 33 + $y;
+                    $i10 = (($x0 + 1) * 5 + $z0) * 33 + $y;
+                    $i01 = ($x0 * 5 + $z0 + 1) * 33 + $y;
+                    $i11 = (($x0 + 1) * 5 + $z0 + 1) * 33 + $y;
+                    $a0 = $field[$i00] + ($field[$i10] - $field[$i00]) * $tx;
+                    $a1 = $field[$i01] + ($field[$i11] - $field[$i01]) * $tx;
+                    $vals[$y] = $a0 + ($a1 - $a0) * $tz;
+                }
+                $profiles[$z * 16 + $x] = $vals;
+            }
+        }
+
+        // 先扫一遍每列的地表高度，供「靠海才是沙滩」判断用（只读，不写方块）
+        $surfPre = [];
+        for ($pz = 0; $pz < 16; $pz++) {
+            for ($px = 0; $px < 16; $px++) {
+                $vals = $profiles[$pz * 16 + $px];
+                $hp = 0;
+                for ($y = 32; $y >= 0; $y--) {
+                    if ($vals[$y] > 0.0) {
+                        $hp = $y * 8 + 8;
+                        break;
+                    }
+                }
+                if ($hp > 255) {
+                    $hp = 255;
+                }
+                $top = 0;
+                for ($y = $hp; $y >= 1; $y--) {
+                    $y0 = $y >> 3;
+                    $ty = ($y & 7) / 8.0;
+                    $d = $vals[$y0] + ($vals[$y0 + 1] - $vals[$y0]) * $ty;
+                    if ($d > 0.0) {
+                        $top = $y;
+                        break;
+                    }
+                }
+                $surfPre[$pz * 16 + $px] = $top;
+            }
+        }
 
         // ---------------- 基础地形 ----------------
         for ($z = 0; $z < 16; $z++) {
             for ($x = 0; $x < 16; $x++) {
                 $wx = $cx * 16 + $x;
                 $wz = $cz * 16 + $z;
-                $h = $heightMap[$z * 16 + $x];
+                $vals = $profiles[$z * 16 + $x];
+                // 最高正密度层，作为这一列的填充上界
+                $h = 0;
+                for ($y = 32; $y >= 0; $y--) {
+                    if ($vals[$y] > 0.0) {
+                        $h = $y * 8 + 8;
+                        break;
+                    }
+                }
+                if ($h > 255) {
+                    $h = 255;
+                }
                 $biome = $biomeGrid[$z * 16 + $x];
+
+                // 逐格判断密度，只填实心格，保留原版的 3D 起伏和悬垂
+                $solid = [];
+                for ($y = 1; $y <= $h; $y++) {
+                    $y0 = $y >> 3;
+                    $ty = ($y & 7) / 8.0;
+                    $d = $vals[$y0] + ($vals[$y0 + 1] - $vals[$y0]) * $ty;
+                    if ($d > 0.0) {
+                        $solid[$y] = true;
+                        $set($x, $y, $z, 1);
+                    }
+                }
+                // 真正的地表 = 这一列最高的实心格
+                $topSolid = 0;
+                for ($y = $h; $y >= 0; $y--) {
+                    if (isset($solid[$y])) {
+                        $topSolid = $y;
+                        break;
+                    }
+                }
+                $h = $topSolid;
+
                 $surface[$z * 16 + $x] = $h;
                 $biomeGrid[$z * 16 + $x] = $biome;
                 $biomes .= chr($biome);
 
                 $set($x, 0, $z, 7);        // 基岩
 
+                // 只在实心格里换表层方块，不会把空气填成泥土
+                $put = function (int $y, int $id, int $meta = 0) use (&$solid, $set, $x, $z): void {
+                    if (isset($solid[$y])) {
+                        $set($x, $y, $z, $id, $meta);
+                    }
+                };
+
                 if ($h < self::SEA) {
                     // 海底：石头 + 表层沙，水灌到海平面，冷海面结冰
-                    for ($y = 1; $y <= $h - 3; $y++) {
-                        $set($x, $y, $z, 1);
-                    }
                     for ($y = max(1, $h - 2); $y <= $h; $y++) {
-                        $set($x, $y, $z, 12);
+                        $put($y, 12);
                     }
                     for ($y = $h + 1; $y <= self::SEA; $y++) {
-                        $set($x, $y, $z, 9);
+                        if (!isset($solid[$y])) {
+                            $set($x, $y, $z, 9);
+                        }
                     }
                     if ($biome === 10 && $h + 1 <= self::SEA) {
-                        $set($x, self::SEA, $z, 79);   // 冰
+                        $put(self::SEA, 79);   // 冰
                     }
                     continue;
                 }
 
-                if ($h <= 64) {
-                    // 沙滩
-                    for ($y = 1; $y <= $h - 3; $y++) {
-                        $set($x, $y, $z, 1);
+                // 只有紧挨着水才铺沙滩；内陆低地还是按群系走
+                $isCoast = false;
+                foreach ([[1, 0], [-1, 0], [0, 1], [0, -1]] as [$dx, $dz]) {
+                    $nx = $x + $dx;
+                    $nz = $z + $dz;
+                    if ($nx < 0 || $nx > 15 || $nz < 0 || $nz > 15) {
+                        continue;
                     }
+                    if ($surfPre[$nz * 16 + $nx] < self::SEA) {
+                        $isCoast = true;
+                        break;
+                    }
+                }
+                if ($h <= self::SEA + 1 && $isCoast) {
+                    // 沙滩
                     for ($y = max(1, $h - 3); $y <= $h; $y++) {
-                        $set($x, $y, $z, 12);
+                        $put($y, 12);
                     }
                     continue;
                 }
 
                 if ($biome === 2) {
                     // 沙漠：沙子 + 砂岩
-                    for ($y = 1; $y <= $h - 5; $y++) {
-                        $set($x, $y, $z, 1);
-                    }
-                    $set($x, max(1, $h - 4), $z, 24);
+                    $put(max(1, $h - 4), 24);
                     for ($y = max(1, $h - 3); $y <= $h; $y++) {
-                        $set($x, $y, $z, 12);
+                        $put($y, 12);
                     }
                     continue;
                 }
 
                 if ($biome === 3) {
                     // 山地：高处露石头，低处还是草
-                    for ($y = 1; $y < $h; $y++) {
-                        $set($x, $y, $z, $h > 100 ? 1 : 3);
+                    $topId = $h > 100 ? 1 : 2;
+                    for ($y = max(1, $h - 3); $y < $h; $y++) {
+                        $put($y, $topId === 1 ? 1 : 3);
                     }
-                    $set($x, $h, $z, $h > 100 ? 1 : 2);
+                    $put($h, $topId);
                     continue;
                 }
 
                 // 其余群系走表层规则表：顶层 + 填充层 + 要不要盖雪
                 [$topId, $topMeta, $fillId, $fillMeta, $snow] = SurfaceRules::for($biome);
                 $depth = 3 + ((int) floor(self::hash01($wx, $wz, 0x5EA5) * 2));   // 3~4 格厚
-                for ($y = 1; $y <= $h - $depth - 1; $y++) {
-                    $set($x, $y, $z, 1);
-                }
                 for ($y = max(1, $h - $depth); $y < $h; $y++) {
-                    $set($x, $y, $z, $fillId, $fillMeta);
+                    $put($y, $fillId, $fillMeta);
                 }
-                $set($x, $h, $z, $topId, $topMeta);
-                if ($snow && $h < 127) {
+                $put($h, $topId, $topMeta);
+                if ($snow && $h < 255) {
                     $set($x, $h + 1, $z, 78);   // 雪层
                 }
             }
@@ -183,11 +280,17 @@ final class TerrainGenerator
         $getBlock = function (int $wx, int $wy, int $wz) use (&$sections, $cx0, $cz0): int {
             $x = $wx - $cx0;
             $z = $wz - $cz0;
+            // 生成范围只有 y=0..255，超出的一律当空气
             if ($x < 0 || $x > 15 || $z < 0 || $z > 15 || $wy < 0 || $wy > 255) {
                 return 0;
             }
+            $i = (($wy & 15) << 8) | ($z << 4) | $x;
+            $sy = $wy >> 4;
+            if (!isset($sections[$sy]['blocks'][$i])) {
+                return 0;
+            }
 
-            return ord($sections[$wy >> 4]['blocks'][(($wy & 15) << 8) | ($z << 4) | $x]);
+            return ord($sections[$sy]['blocks'][$i]);
         };
         $setBlock = function (int $wx, int $wy, int $wz, int $id) use (&$sections, $cx0, $cz0): void {
             $x = $wx - $cx0;
@@ -241,7 +344,7 @@ final class TerrainGenerator
             }
 
             $th = $biome === 35 ? 5 + (int) floor($r1 * 3) : 4 + (int) floor($r1 * 3);
-            if ($h + $th + 2 > 127) {
+            if ($h + $th + 2 > 255) {
                 continue;
             }
             for ($dy = 1; $dy <= $th; $dy++) {
@@ -372,7 +475,7 @@ final class TerrainGenerator
         $heights = array_fill(0, 256, 0);
         for ($z = 0; $z < 16; $z++) {
             for ($x = 0; $x < 16; $x++) {
-                for ($y = 127; $y >= 0; $y--) {
+                for ($y = 255; $y >= 0; $y--) {
                     if ($get($x, $y, $z) !== 0) {
                         $heights[$z * 16 + $x] = $y + 1;
                         break;
@@ -383,14 +486,14 @@ final class TerrainGenerator
 
         for ($z = 0; $z < 16; $z++) {
             for ($x = 0; $x < 16; $x++) {
-                for ($y = $heights[$z * 16 + $x]; $y < 128; $y++) {
+                for ($y = $heights[$z * 16 + $x]; $y < 256; $y++) {
                     $setSky($x, $y, $z, 15);
                 }
             }
         }
 
         $sectionTags = [];
-        for ($sy = 0; $sy < 8; $sy++) {
+        for ($sy = 0; $sy < 16; $sy++) {
             if (trim($sections[$sy]['blocks'], "\x00") === '') {
                 continue;
             }
