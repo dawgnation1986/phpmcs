@@ -487,6 +487,10 @@ final class AnvilWorld
     /** @return array{x:float,y:float,z:float,yaw:float,pitch:float}|null */
     public function lastPosition(string $name): ?array
     {
+        $dat = $this->readPlayerDat($name);
+        if ($dat !== null && isset($dat['pos']['x'], $dat['pos']['y'], $dat['pos']['z'])) {
+            return $dat['pos'];
+        }
         $p = $this->playerPositions()[strtolower($name)] ?? null;
         if (!is_array($p) || !isset($p['x'], $p['y'], $p['z'])) {
             return null;
@@ -519,6 +523,9 @@ final class AnvilWorld
             json_encode($pos, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT),
             LOCK_EX
         );
+    
+        // 同步刷新 playerdata/<uuid>.dat（现在是读取正本）
+        $this->writePlayerDat($name, $pos[$key]);
     }
 
     /**
@@ -527,9 +534,86 @@ final class AnvilWorld
      *
      * @return array<int, array{id:int,count:int,damage:int}>
      */
+    /**
+     * 读原版格式的 playerdata/<uuid>.dat。
+     * 读不出来（文件不存在/损坏）返回 null，调用方退回 JSON。
+     * @return array{inv:array,pos:array,hp:float,food:int}|null
+     */
+    public function readPlayerDat(string $name): ?array
+    {
+        $path = $this->dir . DIRECTORY_SEPARATOR . 'playerdata'
+            . DIRECTORY_SEPARATOR . $this->offlineUuid($name) . '.dat';
+        if (!is_file($path)) {
+            return null;
+        }
+
+        try {
+            $tag = Nbt::parseFile($path);
+        } catch (\Throwable $e) {
+            return null;   // 坏了就当没有，退回 JSON 备份
+        }
+
+        $root = $tag->value[''] ?? $tag;
+        if (!$root instanceof Tag) {
+            return null;
+        }
+        $v = $root->value;
+
+        $inv = [];
+        $list = $v['Inventory'] ?? null;
+        if ($list instanceof Tag) {
+            foreach ($list->value['items'] ?? [] as $it) {
+                if (!$it instanceof Tag) {
+                    continue;
+                }
+                $slot = (int) ($it->value['Slot']->value ?? -1);
+                $id = (int) ($it->value['id']->value ?? 0);
+                $cnt = (int) ($it->value['Count']->value ?? 0);
+                if ($slot < 0 || $id <= 0 || $cnt <= 0) {
+                    continue;
+                }
+                $inv[$slot] = [
+                    'id' => $id,
+                    'count' => $cnt,
+                    'damage' => (int) ($it->value['Damage']->value ?? 0),
+                ];
+            }
+        }
+
+        $pos = [];
+        $p = $v['Pos'] ?? null;
+        if ($p instanceof Tag) {
+            $a = $p->value['items'] ?? [];
+            if (count($a) >= 3) {
+                $pos = [
+                    'x' => (float) $a[0]->value,
+                    'y' => (float) $a[1]->value,
+                    'z' => (float) $a[2]->value,
+                ];
+                $r = $v['Rotation'] ?? null;
+                if ($r instanceof Tag) {
+                    $b = $r->value['items'] ?? [];
+                    $pos['yaw'] = (float) ($b[0]->value ?? 0);
+                    $pos['pitch'] = (float) ($b[1]->value ?? 0);
+                }
+            }
+        }
+
+        return [
+            'inv' => $inv,
+            'pos' => $pos,
+            'hp' => (float) ($v['Health']->value ?? 20.0),
+            'food' => (int) ($v['foodLevel']->value ?? 20),
+        ];
+    }
+
     public function inventory(string $name): array
     {
-        $inv = $this->playerPositions()[strtolower($name)]['inv'] ?? [];
+        // 正本优先：playerdata/<uuid>.dat；读不到才退回 JSON 备份
+        $dat = $this->readPlayerDat($name);
+        $inv = $dat !== null && $dat['inv'] !== []
+            ? $dat['inv']
+            : ($this->playerPositions()[strtolower($name)]['inv'] ?? []);
         if (!is_array($inv)) {
             return [];
         }

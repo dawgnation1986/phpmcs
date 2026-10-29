@@ -246,6 +246,10 @@ final class Server
 
     public function run(): void
     {
+        // 先把出生点周围生成好，再开端口。
+        // 顺序很重要：端口一开客户端就会连进来，那时还没地形可发。
+        $this->preGenerateSpawn();
+
         $ctx = stream_context_create([
             'socket' => ['backlog' => 64, 'so_reuseaddr' => true],
         ]);
@@ -267,9 +271,6 @@ final class Server
         $this->log("MOTD: {$this->motd}");
         $this->log('存档: ' . ($this->world->created ? '新建' : '载入') . ' / 视距 '
             . $this->viewDistance . ' / 模式 ' . self::gameModeName($this->gamemode));
-
-        // 进服前先把出生点周围生成好：客户端连上来时不用干等区块
-        $this->preGenerateSpawn();
 
         while (true) {
             $read = [$master];
