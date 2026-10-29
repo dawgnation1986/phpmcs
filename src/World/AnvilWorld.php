@@ -1056,7 +1056,8 @@ final class AnvilWorld
                 'LevelName' => Tag::str('PHP World'),
                 'generatorName' => Tag::str('default'),
                 'generatorVersion' => Tag::int(1),
-                'RandomSeed' => Tag::long(random_int(-2147483647, 2147483647)),
+                // Java 版的种子是 64 位（-2^63 ~ 2^63-1），原来只取了 32 位范围，
+                'RandomSeed' => Tag::long(random_int(PHP_INT_MIN, PHP_INT_MAX)),
                 'GameType' => Tag::int(1),
                 'Difficulty' => Tag::byte(0),
                 'DifficultyLocked' => Tag::byte(0),

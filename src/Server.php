@@ -1039,6 +1039,21 @@ final class Server
                 }
                 // 1.8 有一部分物品 id 和方块 id 不是同一个数（甘蔗、种子、作物…），
                 // 直接拿物品 id 当方块 id 会让服务端拒绝放置。
+                // 船是实体不是方块，必须在 blockId 判定之前拦下来 ——
+                // 否则 blockId=0 会被当成无效放置直接拒掉。
+                if ($itemId === 333) {
+                    $this->spawnBoat($x + 0.5, $y + 1.0, $z + 0.5, $c->yaw);
+                    $slot2 = 36 + $c->heldSlot;
+                    if (isset($c->inventory[$slot2])) {
+                        if (--$c->inventory[$slot2]['count'] <= 0) {
+                            unset($c->inventory[$slot2]);
+                        }
+                        $this->sendPlayerInventory($c);
+                    }
+                    $this->log("  {$c->username} 放船 @ {$x},{$y},{$z}");
+                    break;
+                }
+
                 $blockId = $itemId <= 255 ? $itemId : (self::PLACEABLE_ITEM[$itemId] ?? 0);
                 if ($blockId <= 0) {
                     break; // 这个物品不能当方块放
@@ -1057,20 +1072,6 @@ final class Server
                     $this->log("  放 方块{$blockId} @ {$tx},{$ty},{$tz} 被拒：这个位置不能种");
                     break;
                 }
-                // 船不是方块，是实体：Spawn Object type=1
-                if ($itemId === 333) {
-                    $this->spawnBoat($x + 0.5, $y + 1.0, $z + 0.5, $c->yaw);
-                    $slot2 = 36 + $c->heldSlot;
-                    if (isset($c->inventory[$slot2])) {
-                        if (--$c->inventory[$slot2]['count'] <= 0) {
-                            unset($c->inventory[$slot2]);
-                        }
-                        $this->sendPlayerInventory($c);
-                    }
-                    $this->log("  放 船 @ {$x},{$y},{$z}");
-                    break;
-                }
-
                 $this->log("  放 方块{$blockId} @ {$tx},{$ty},{$tz}（物品 {$itemId}，点的 {$x},{$y},{$z} 面 {$face}）");
                 // 箱子(54)不再真的放进世界：客户端把它设成 BlockContainer 方块
                 // 会在 1.8.9 上抛 NPE，方块状态永远落不了地。
@@ -1733,6 +1734,7 @@ final class Server
         430 => 196,  // 金合欢门
         431 => 197,  // 深色橡木门
         355 => 26,   // 床
+        397 => 144,  // 头颅（生物头颅/玩家头颅都是 144）
         295 => 59,   // 小麦种子 -> 作物
         338 => 83,   // 甘蔗 -> 芦苇
         372 => 115,  // 地狱疣
