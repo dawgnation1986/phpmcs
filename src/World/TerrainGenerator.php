@@ -43,6 +43,18 @@ final class TerrainGenerator
         $this->perm = array_merge($p, $p);
     }
 
+    /** 只查群系，不生成地形（/findbiome 用） */
+    /** 一块矩形区域的群系（一次算完，比逐区块快几十倍） */
+    public function biomeArea(int $x, int $z, int $w, int $h): array
+    {
+        return $this->layers->area($x, $z, $w, $h);
+    }
+
+    public function biomeGrid(int $cx, int $cz): array
+    {
+        return $this->layers->chunkBiomes($cx, $cz);
+    }
+
     public function generate(int $cx, int $cz): Tag
     {
         // 生成 y=0..255，和原版 1.8 一样是 16 个 section

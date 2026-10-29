@@ -89,6 +89,12 @@ final class BiomeLayerProvider
     }
 
     /** @return int[] 256 个群系 id，按 z*16+x 排列 */
+    /** 任意矩形区域（方块坐标）的群系，一次算完 */
+    public function area(int $x, int $z, int $w, int $h): array
+    {
+        return $this->voronoi->getInts($x, $z, $w, $h);
+    }
+
     public function chunkBiomes(int $chunkX, int $chunkZ): array
     {
         return $this->voronoi->getInts($chunkX * 16, $chunkZ * 16, 16, 16);

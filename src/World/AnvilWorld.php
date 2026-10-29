@@ -644,6 +644,18 @@ final class AnvilWorld
     private ?int $timeOffset = null;
 
     /** 世界种子（level.dat 的 RandomSeed） */
+    /** 区块的 16x16 群系（不触发生成） */
+    /** 矩形区域的群系（方块坐标），一次算完 */
+    public function biomeArea(int $x, int $z, int $w, int $h): array
+    {
+        return $this->generator->biomeArea($x, $z, $w, $h);
+    }
+
+    public function chunkBiomes(int $cx, int $cz): array
+    {
+        return $this->generator->biomeGrid($cx, $cz);
+    }
+
     public function seed(): int
     {
         return $this->seed;

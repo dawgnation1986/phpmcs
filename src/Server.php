@@ -2224,6 +2224,88 @@ final class Server
                 ], 1);
                 break;
 
+            case 'tp':
+                if (count($parts) < 3) {
+                    $this->sendChat($c, ['text' => '用法：/tp x y z', 'color' => 'red'], 1);
+                    break;
+                }
+                $c->x = (float) $parts[0];
+                $c->y = (float) $parts[1];
+                $c->z = (float) $parts[2];
+                $c->send(self::C_POS_LOOK, (new Writer())
+                    ->double($c->x)->double($c->y)->double($c->z)
+                    ->float($c->yaw)->float($c->pitch)->byte(0));
+                $this->sendChat($c, ['text' => sprintf('已传送到 %.1f %.1f %.1f', $c->x, $c->y, $c->z),
+                    'color' => 'green'], 1);
+                $this->log(sprintf('  %s /tp %.1f %.1f %.1f', $c->username, $c->x, $c->y, $c->z));
+                break;
+
+            case 'biome':
+                $bx = (int) floor($c->x);
+                $bz = (int) floor($c->z);
+                $grid = $this->world->chunkBiomes($bx >> 4, $bz >> 4);
+                $id = $grid[($bz & 15) * 16 + ($bx & 15)] ?? -1;
+                $this->sendChat($c, ['text' => sprintf('当前群系：%s (id %d)  区块 %d,%d',
+                    self::biomeName($id), $id, $bx >> 4, $bz >> 4), 'color' => 'aqua'], 1);
+                break;
+
+            case 'findbiome':
+                if (count($parts) < 1 || $parts[0] === '') {
+                    $this->sendChat($c, ['text' => '用法：/findbiome 平原  或  /findbiome 1', 'color' => 'red'], 1);
+                    break;
+                }
+                $want = self::biomeIdByName((string) $parts[0]);
+                if ($want === null) {
+                    $this->sendChat($c, ['text' => '不认识的群系。可用：平原 森林 沙漠 丛林 针叶林 雪原 沼泽 台地 山地',
+                        'color' => 'red'], 1);
+                    break;
+                }
+                $pcx = (int) floor($c->x) >> 4;
+                $pcz = (int) floor($c->z) >> 4;
+                // 一次算一大片再扫，比逐区块快几十倍（逐区块 441 次要 20 秒）
+                $r = 10;
+                $bx = ($pcx - $r) * 16;
+                $bz = ($pcz - $r) * 16;
+                $side = ($r * 2 + 1) * 16;
+                $grid = $this->world->biomeArea($bx, $bz, $side, $side);
+                $found = null;
+                $bestD = PHP_INT_MAX;
+                for ($i = 0; $i < $side * $side; $i++) {
+                    if (($grid[$i] ?? -1) !== $want) {
+                        continue;
+                    }
+                    $gx = $bx + ($i % $side);
+                    $gz = $bz + intdiv($i, $side);
+                    $d = max(abs($gx - (int) $c->x), abs($gz - (int) $c->z));
+                    if ($d < $bestD) {
+                        $bestD = $d;
+                        $found = [$gx >> 4, $gz >> 4];
+                    }
+                }
+                if ($found === null) {
+                    $this->sendChat($c, ['text' => '半径 10 区块内没找到这个群系，换个方向再试', 'color' => 'red'], 1);
+                    break;
+                }
+                [$tx2, $tz2] = $found;
+                $chunk = $this->world->chunk($tx2, $tz2);
+                $top = 64;
+                for ($y = 254; $y > 1; $y--) {
+                    if (($chunk->blockState(8, $y, 8) >> 4) !== 0) {
+                        $top = $y + 1;
+                        break;
+                    }
+                }
+                $c->x = $tx2 * 16 + 8.5;
+                $c->y = (float) $top;
+                $c->z = $tz2 * 16 + 8.5;
+                $c->send(self::C_POS_LOOK, (new Writer())
+                    ->double($c->x)->double($c->y)->double($c->z)
+                    ->float($c->yaw)->float($c->pitch)->byte(0));
+                $this->sendChat($c, ['text' => sprintf('%s 在区块 %d,%d（%d 区块外），已传送',
+                    self::biomeName($want), $tx2, $tz2, (int) max(abs($tx2 - $pcx), abs($tz2 - $pcz))),
+                    'color' => 'green'], 1);
+                break;
+
             case 'spawn':
                 [$sx, $sy, $sz] = $this->world->spawnPoint();
                 $c->x = $sx + 0.5;
@@ -3422,6 +3504,48 @@ final class Server
             $this->broadcastChat('§e' . $c->username . ' 离开了游戏', 1);
             $this->world->save();
         }
+    }
+
+    /** 群系 id → 中文名（只列常用的） */
+    private const BIOME_NAMES = [
+        0 => '海洋', 1 => '平原', 2 => '沙漠', 3 => '山地', 4 => '森林', 5 => '针叶林',
+        6 => '沼泽', 7 => '河流', 10 => '冰海', 12 => '冰原', 13 => '雪山', 14 => '蘑菇岛',
+        16 => '沙滩', 17 => '沙漠丘陵', 18 => '森林丘陵', 19 => '针叶林丘陵', 20 => '山地边缘',
+        21 => '丛林', 22 => '丛林丘陵', 23 => '丛林边缘', 24 => '深海', 25 => '石滩',
+        26 => '冷沙滩', 27 => '白桦林', 28 => '白桦林丘陵', 29 => '黑森林', 30 => '冷针叶林',
+        31 => '冷针叶林丘陵', 32 => '巨型针叶林', 33 => '巨型针叶林丘陵', 34 => '山地+',
+        35 => '热带草原', 36 => '热带草原高原', 37 => '台地', 38 => '台地高原', 39 => '台地高原F',
+        129 => '向日葵平原', 130 => '花林', 140 => '冰刺平原',
+    ];
+
+    public static function biomeName(int $id): string
+    {
+        return self::BIOME_NAMES[$id] ?? ('未知群系 ' . $id);
+    }
+
+    /** 名字或数字 → 群系 id */
+    public static function biomeIdByName(string $q): ?int
+    {
+        $q = trim($q);
+        if ($q !== '' && ctype_digit($q)) {
+            return (int) $q;
+        }
+        $alias = [
+            '雪原' => 12, '冰原' => 12, '雪山' => 13, '桦木林' => 27, '桦树林' => 27,
+            '黑森林' => 29, '丛林' => 21, '雨林' => 21, '沙漠' => 2, '平原' => 1,
+            '森林' => 4, '针叶林' => 5, '沼泽' => 6, '热带草原' => 35, '草原' => 35,
+            '台地' => 37, '恶地' => 37, '山地' => 3, '海洋' => 0, '蘑菇岛' => 14, '沙滩' => 16,
+        ];
+        if (isset($alias[$q])) {
+            return $alias[$q];
+        }
+        foreach (self::BIOME_NAMES as $id => $name) {
+            if ($name === $q) {
+                return $id;
+            }
+        }
+
+        return null;
     }
 
     public static function offlineUuid(string $name): string
