@@ -17,6 +17,8 @@ namespace PhpMc\World\Layer;
 final class BiomeLayerProvider
 {
     private GenLayer $voronoi;
+    /** 1:4 的群系层（riverMix），地形生成要用它，不是 voronoi */
+    private GenLayer $genBiomes;
 
     public function __construct(int $seed)
     {
@@ -69,14 +71,21 @@ final class BiomeLayerProvider
         $smooth = new GenLayerSmooth(1000, $chain);
         $mix = new GenLayerRiverMix(100, $smooth, $riverSmooth);
 
+        $this->genBiomes = $mix;
         $this->voronoi = new GenLayerVoronoiZoom(10, $mix);
         $this->voronoi->initWorldGenSeed($seed);
     }
 
-    /** 原版 getBiomesForGeneration：10x10，1/4 缩放的群系数组 */
+    /**
+     * 原版 getBiomesForGeneration：10x10、1/4 缩放的群系数组，给密度场加权用。
+     *
+     * **必须用 riverMix（1:4）这一层，不能用 voronoi（1:1）。**
+     * 之前用错层，密度场拿到的群系和实际显示的群系差了一整个区域，
+     * 于是海洋里长浮空陆地、森林里出石壁。
+     */
     public function generationBiomes(int $chunkX, int $chunkZ): array
     {
-        return $this->voronoi->getInts($chunkX * 4 - 2, $chunkZ * 4 - 2, 10, 10);
+        return $this->genBiomes->getInts($chunkX * 4 - 2, $chunkZ * 4 - 2, 10, 10);
     }
 
     /** @return int[] 256 个群系 id，按 z*16+x 排列 */
