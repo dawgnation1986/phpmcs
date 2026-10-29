@@ -33,6 +33,7 @@ require __DIR__ . '/../src/World/ChestStore.php';
 require __DIR__ . '/../src/ChestTrait.php';
 require __DIR__ . '/../src/MobTrait.php';
 require __DIR__ . '/../src/FurnaceTrait.php';
+require __DIR__ . '/../src/SpawnerTrait.php';
 require __DIR__ . '/../src/FluidTrait.php';
 require __DIR__ . '/../src/RedstoneTrait.php';
 require __DIR__ . '/../src/CraftingTrait.php';
@@ -115,4 +116,5 @@ $gamemode = $world->created ? 1 : $world->gameType();
 
 $server = new PhpMc\Server('0.0.0.0', $port, $motd, $world, $skins, $chests, $maxPlayers, $gamemode, $viewDistance ?? 3);
 $world->addTileProvider([$server, 'furnaceTilesForChunk']);
+$world->addTileProvider([$server, 'spawnerTilesForChunk']);
 $server->run();

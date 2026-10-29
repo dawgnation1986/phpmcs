@@ -135,6 +135,7 @@ final class Server
     use CraftingTrait;
     use MobTrait;
     use FurnaceTrait;
+    use SpawnerTrait;
     use FluidTrait;
     use RedstoneTrait;
 
@@ -604,6 +605,12 @@ final class Server
         foreach ($this->world->signsInChunk($cx, $cz) as [$sgx, $sgy, $sgz, $slines]) {
             $this->sendSign($c, $sgx, $sgy, $sgz, $slines);
         }
+
+        // 刷怪笼：登记进内存索引 + 发 0x35（action=1 才是刷怪笼分支）
+        foreach ($chunk->blockPositions(52) as [$spx, $spy, $spz]) {
+            $this->registerSpawner($spx, $spy, $spz);
+            $this->sendSpawner($c, $spx, $spy, $spz);
+        }
         if ($chests !== []) {
             $now = microtime(true);
             // 每 2 秒喂一轮，共 15 轮（30 秒）。客户端什么时候把区块真正加载好，
@@ -650,6 +657,23 @@ final class Server
         $c->send(self::C_UPDATE_SIGN, (new Writer())
             ->raw($this->packPositionBytes($x, $y, $z))
             ->string($out[0])->string($out[1])->string($out[2])->string($out[3]));
+    }
+
+    /** 刷怪笼要 action=1，客户端才会走「旋转的小怪」那条渲染分支 */
+    private function sendSpawner(Connection $c, int $x, int $y, int $z): void
+    {
+        $k = $x . ',' . $y . ',' . $z;
+        $mob = $this->spawners[$k]['mob'] ?? 54;
+        $nbt = Nbt::write(Tag::compound([
+            'id' => Tag::str('MobSpawner'),
+            'x' => Tag::int($x), 'y' => Tag::int($y), 'z' => Tag::int($z),
+            'EntityId' => Tag::str($this->spawnerMobName($mob)),
+            'Delay' => Tag::short((int) ($this->spawners[$k]['delay'] ?? 20)),
+        ]));
+        $c->send(self::C_UPDATE_TILE_ENTITY, (new Writer())
+            ->raw($this->packPositionBytes($x, $y, $z))
+            ->byte(1)
+            ->raw($nbt));
     }
 
     private function sendTileEntityToAll(int $x, int $y, int $z): void
@@ -1297,6 +1321,10 @@ final class Server
         // 告示牌：放下就建一个空 TE，客户端编辑时才有地方存
         if ($id === 63 || $id === 68) {
             $this->world->setSignText($x, $y, $z, ['', '', '', '']);
+        }
+        // 刷怪笼：登记进索引，tick 时才会刷怪
+        if ($id === 52) {
+            $this->registerSpawner($x, $y, $z);
         }
     }
 
@@ -3421,6 +3449,7 @@ final class Server
         $this->tickFluids($now);
         $this->tickFurnaces($now);
         $this->tickMobs($now);
+        $this->tickSpawners($now);
 
         // 每秒同步一次时间，客户端天空才会真的昼→夜
         if ($now - $this->lastTimeSync >= 1.0) {
