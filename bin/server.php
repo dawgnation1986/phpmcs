@@ -114,4 +114,5 @@ $world->attachChestStore($chests);
 $gamemode = $world->created ? 1 : $world->gameType();
 
 $server = new PhpMc\Server('0.0.0.0', $port, $motd, $world, $skins, $chests, $maxPlayers, $gamemode, $viewDistance ?? 3);
+$world->addTileProvider([$server, 'furnaceTilesForChunk']);
 $server->run();

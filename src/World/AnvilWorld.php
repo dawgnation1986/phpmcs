@@ -358,6 +358,18 @@ final class AnvilWorld
         return $n;
     }
 
+    /** @var array<callable> 额外 TE 提供者：fn(cx,cz): Tag[] */
+    private array $tileProviders = [];
+
+    /**
+     * 注册一个 TE 提供者。写区块时会把它的返回值并进 TileEntities。
+     * 提供者负责自己那类 TE 的完整内容（比如熔炉的 Items/BurnTime）。
+     */
+    public function addTileProvider(callable $fn): void
+    {
+        $this->tileProviders[] = $fn;
+    }
+
     /** 箱子存储（由 bin/server.php 注入；写区块时把箱子 TE 一并写进 NBT） */
     private ?ChestStore $chests = null;
 
@@ -461,6 +473,23 @@ final class AnvilWorld
         // 合并而不是覆盖：真存档里还有告示牌 / 熔炉 / 陷阱箱……
         // 直接整表替换会把它们抹掉。这里只把「Chest」类型换成我们这份，
         // 其它 TE 原样保留。
+        // 收集各个 provider 的 TE（熔炉等），并记下它们“认领”的 id
+        $extra = [];
+        $owned = ['Chest' => true];   // 箱子由 ChestStore 负责
+        foreach ($this->tileProviders as $fn) {
+            foreach ($fn($chunk->cx, $chunk->cz) as $tag) {
+                if (!$tag instanceof Tag) {
+                    continue;
+                }
+                $extra[] = $tag;
+                $id = $tag->value['id']->value ?? '';
+                if ($id !== '') {
+                    $owned[$id] = true;
+                }
+            }
+        }
+
+        // 保留磁盘上那些没人认领的 TE（告示牌、刷怪箱……）
         $kept = [];
         $existing = $root->value['TileEntities'] ?? null;
         if ($existing instanceof Tag) {
@@ -469,14 +498,14 @@ final class AnvilWorld
                     continue;
                 }
                 $id = $t->value['id']->value ?? '';
-                if ($id === 'Chest') {
-                    continue;   // 箱子用我们自己的数据重写
+                if (isset($owned[$id])) {
+                    continue;   // 这类由我们重写
                 }
                 $kept[] = $t;
             }
         }
 
-        $root->value['TileEntities'] = Tag::list(Tag::COMPOUND, array_merge($kept, $list));
+        $root->value['TileEntities'] = Tag::list(Tag::COMPOUND, array_merge($kept, $list, $extra));
     }
 
     private function writeChunk(Chunk $chunk): bool

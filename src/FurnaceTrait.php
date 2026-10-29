@@ -80,6 +80,50 @@ trait FurnaceTrait
         @file_put_contents($this->furnaceFile(), json_encode($this->furnaces), LOCK_EX);
     }
 
+    /**
+     * 供 AnvilWorld 写区块用：本区块内所有熔炉的 TE（原版格式）。
+     * 槽位：0=输入 1=燃料 2=产出。
+     */
+    public function furnaceTilesForChunk(int $cx, int $cz): array
+    {
+        $this->loadFurnaces();
+        $out = [];
+        foreach ($this->furnaces as $k => $f) {
+            $p = explode(',', (string) $k);
+            if (count($p) !== 3) {
+                continue;
+            }
+            [$x, $y, $z] = [(int) $p[0], (int) $p[1], (int) $p[2]];
+            if (($x >> 4) !== $cx || ($z >> 4) !== $cz) {
+                continue;
+            }
+            $items = [];
+            foreach (['in' => 0, 'fuel' => 1, 'out' => 2] as $slot => $slotId) {
+                $it = $f[$slot] ?? null;
+                if (!is_array($it) || !isset($it['id']) || (int) ($it['count'] ?? 0) <= 0) {
+                    continue;
+                }
+                $items[] = \PhpMc\Nbt\Tag::compound([
+                    'Slot' => \PhpMc\Nbt\Tag::byte($slotId),
+                    'id' => \PhpMc\Nbt\Tag::short((int) $it['id']),
+                    'Count' => \PhpMc\Nbt\Tag::byte((int) $it['count']),
+                    'Damage' => \PhpMc\Nbt\Tag::short((int) ($it['damage'] ?? 0)),
+                ]);
+            }
+            $out[] = \PhpMc\Nbt\Tag::compound([
+                'id' => \PhpMc\Nbt\Tag::str('Furnace'),
+                'x' => \PhpMc\Nbt\Tag::int($x),
+                'y' => \PhpMc\Nbt\Tag::int($y),
+                'z' => \PhpMc\Nbt\Tag::int($z),
+                'Items' => \PhpMc\Nbt\Tag::list(\PhpMc\Nbt\Tag::COMPOUND, $items),
+                'BurnTime' => \PhpMc\Nbt\Tag::short((int) ($f['burn'] ?? 0)),
+                'CookTime' => \PhpMc\Nbt\Tag::short((int) ($f['cook'] ?? 0)),
+            ]);
+        }
+
+        return $out;
+    }
+
     private function furnaceKey(int $x, int $y, int $z): string
     {
         return $x . ',' . $y . ',' . $z;
