@@ -160,6 +160,7 @@ final class Server
     private const C_HEAD_LOOK = 0x19;
     private const C_CHUNK_DATA = 0x21;
     /** 1.8 的瓦片实体包：箱子这类方块没有它客户端就不画 */
+    private const C_UPDATE_SIGN = 0x33;   // S->C Update Sign
     private const C_UPDATE_TILE_ENTITY = 0x35;
     // 1.8：0x0B 是 Animation（挥手），0x0D 才是 Collect Item。
     // 写成 0x0B 的话客户端只会挥一下手，地上的东西永远不消失。
@@ -598,6 +599,11 @@ final class Server
             $sy = $y >> 4;
             $c->chestSections[$cx . ',' . $cz . ',' . $sy] = [$cx, $cz, $sy];
         }
+
+        // 告示牌：0x33 Update Sign，同样随区块补发
+        foreach ($this->world->signsInChunk($cx, $cz) as [$sgx, $sgy, $sgz, $slines]) {
+            $this->sendSign($c, $sgx, $sgy, $sgz, $slines);
+        }
         if ($chests !== []) {
             $now = microtime(true);
             // 每 2 秒喂一轮，共 15 轮（30 秒）。客户端什么时候把区块真正加载好，
@@ -627,6 +633,25 @@ final class Server
     }
 
     /** 给所有在线玩家发一次某格的 TE（放箱子/箱子变化后用） */
+    /**
+     * 告示牌文字包 0x33。
+     * 1.8 的每行是 JSON 文本组件；玩家输入的是纯文本，这里包一层 {"text":...}。
+     */
+    private function sendSign(Connection $c, int $x, int $y, int $z, array $lines): void
+    {
+        $lines = array_pad(array_slice(array_values($lines), 0, 4), 4, '');
+        $out = [];
+        foreach ($lines as $t) {
+            $t = (string) $t;
+            $out[] = str_starts_with(ltrim($t), '{')
+                ? $t
+                : json_encode(['text' => $t], JSON_UNESCAPED_UNICODE);
+        }
+        $c->send(self::C_UPDATE_SIGN, (new Writer())
+            ->raw($this->packPositionBytes($x, $y, $z))
+            ->string($out[0])->string($out[1])->string($out[2])->string($out[3]));
+    }
+
     private function sendTileEntityToAll(int $x, int $y, int $z): void
     {
         foreach ($this->conns as $p) {
@@ -1155,6 +1180,23 @@ final class Server
                 $this->sendPlayerInventory($c);
                 break;
 
+            case 0x12: // Update Sign（客户端编辑完告示牌）
+                $sgnPos = $r->readLong();
+                [$sgnX, $sgnY, $sgnZ] = $this->unpackPosition($sgnPos);
+                $sgnLines = [];
+                for ($si = 0; $si < 4; $si++) {
+                    $sgnLines[] = $r->readString(384);
+                }
+                $this->world->setSignText($sgnX, $sgnY, $sgnZ, $sgnLines);
+                foreach ($this->conns as $sp) {
+                    if (!$sp->closed && $sp->username !== '') {
+                        $this->sendSign($sp, $sgnX, $sgnY, $sgnZ, $sgnLines);
+                    }
+                }
+                $this->log(sprintf('  告示牌 %d,%d,%d 写入: %s', $sgnX, $sgnY, $sgnZ,
+                    implode(' | ', array_map(fn($v) => mb_substr($v, 0, 20), $sgnLines))));
+                break;
+
             case 0x13: // 客户端报能力（比如开始飞）
                 $flags = $r->readUnsignedByte();
                 $c->flying = ($flags & 0x02) !== 0;
@@ -1250,6 +1292,11 @@ final class Server
                     $this->broadcastTileEntity($nx, $y, $nz);
                 }
             }
+        }
+    
+        // 告示牌：放下就建一个空 TE，客户端编辑时才有地方存
+        if ($id === 63 || $id === 68) {
+            $this->world->setSignText($x, $y, $z, ['', '', '', '']);
         }
     }
 

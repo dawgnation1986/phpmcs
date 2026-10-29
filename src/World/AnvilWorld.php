@@ -370,6 +370,82 @@ final class AnvilWorld
         $this->tileProviders[] = $fn;
     }
 
+    /**
+     * 本区块里的告示牌：[[x, y, z, [行1,行2,行3,行4]], ...]
+     * 告示牌只存在区块 NBT 里，没有单独的 JSON。
+     */
+    public function signsInChunk(int $cx, int $cz): array
+    {
+        $chunk = $this->chunk($cx, $cz);
+        $root = $chunk->root->value['Level'] ?? null;
+        if (!$root instanceof Tag) {
+            return [];
+        }
+        $te = $root->value['TileEntities'] ?? null;
+        if (!$te instanceof Tag) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($te->value['items'] ?? [] as $t) {
+            if (!$t instanceof Tag || ($t->value['id']->value ?? '') !== 'Sign') {
+                continue;
+            }
+            $lines = [];
+            for ($i = 1; $i <= 4; $i++) {
+                $lines[] = (string) ($t->value['Text' . $i]->value ?? '');
+            }
+            $out[] = [
+                (int) ($t->value['x']->value ?? 0),
+                (int) ($t->value['y']->value ?? 0),
+                (int) ($t->value['z']->value ?? 0),
+                $lines,
+            ];
+        }
+
+        return $out;
+    }
+
+    /** 写入/更新一块告示牌的文字（原版格式：Text1..Text4 是 JSON 字符串） */
+    public function setSignText(int $x, int $y, int $z, array $lines): void
+    {
+        $chunk = $this->chunk($x >> 4, $z >> 4);
+        $root = $chunk->root->value['Level'] ?? null;
+        if (!$root instanceof Tag) {
+            return;
+        }
+
+        $items = [];
+        $existing = $root->value['TileEntities'] ?? null;
+        if ($existing instanceof Tag) {
+            foreach ($existing->value['items'] ?? [] as $t) {
+                if (!$t instanceof Tag) {
+                    continue;
+                }
+                $sameSign = ($t->value['id']->value ?? '') === 'Sign'
+                    && (int) ($t->value['x']->value ?? 0) === $x
+                    && (int) ($t->value['y']->value ?? 0) === $y
+                    && (int) ($t->value['z']->value ?? 0) === $z;
+                if ($sameSign) {
+                    continue;   // 这块重写
+                }
+                $items[] = $t;
+            }
+        }
+
+        $lines = array_pad(array_slice($lines, 0, 4), 4, '');
+        $items[] = Tag::compound([
+            'id' => Tag::str('Sign'),
+            'x' => Tag::int($x), 'y' => Tag::int($y), 'z' => Tag::int($z),
+            'Text1' => Tag::str((string) $lines[0]),
+            'Text2' => Tag::str((string) $lines[1]),
+            'Text3' => Tag::str((string) $lines[2]),
+            'Text4' => Tag::str((string) $lines[3]),
+        ]);
+        $root->value['TileEntities'] = Tag::list(Tag::COMPOUND, $items);
+        $chunk->dirty = true;
+    }
+
     /** 箱子存储（由 bin/server.php 注入；写区块时把箱子 TE 一并写进 NBT） */
     private ?ChestStore $chests = null;
 
