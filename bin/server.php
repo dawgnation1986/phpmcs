@@ -60,7 +60,35 @@ if ($probe !== false) {
     exit(1);
 }
 
+
+// ---- server.properties（没这个文件就用命令行参数/默认值）----
+$props = [];
+$propFile = __DIR__ . '/../server.properties';
+if (is_file($propFile)) {
+    foreach (file($propFile, FILE_IGNORE_NEW_LINES) as $__line) {
+        $__line = trim($__line);
+        if ($__line === '' || $__line[0] === '#' || strpos($__line, '=') === false) {
+            continue;
+        }
+        [$__k, $__v] = explode('=', $__line, 2);
+        $props[trim($__k)] = trim($__v);
+    }
+}
+if (isset($props['server-port'])) {
+    $port = (int) $props['server-port'];
+}
+if (isset($props['motd']) && $props['motd'] !== '') {
+    $motd = $props['motd'];
+}
+if (isset($props['view-distance'])) {
+    $viewDistance = max(2, min(16, (int) $props['view-distance']));
+}
+$maxPlayers = isset($props['max-players']) ? max(1, (int) $props['max-players']) : 20;
+
 $world = new PhpMc\World\AnvilWorld($worldDir);
+if (isset($props['gamemode'])) {
+    $gamemode = (int) $props['gamemode'];
+}
 
 // 皮肤白名单：游戏内名字 => 要查的正版名。离线号不要往里加，
 // 否则会查到同名的陌生人，把人家的皮肤贴到你头上。
@@ -83,5 +111,5 @@ $chests = new PhpMc\World\ChestStore(
 );
 $gamemode = $world->created ? 1 : $world->gameType();
 
-$server = new PhpMc\Server('0.0.0.0', $port, $motd, $world, $skins, $chests, 20, $gamemode, 3);
+$server = new PhpMc\Server('0.0.0.0', $port, $motd, $world, $skins, $chests, $maxPlayers, $gamemode, $viewDistance ?? 3);
 $server->run();
