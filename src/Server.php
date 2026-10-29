@@ -1171,6 +1171,20 @@ final class Server
                 }
                 break;
 
+            case 0x0B: // Entity Action：蹲/起身/离开床
+                $r->readVarInt();            // entityId
+                $eaAction = $r->readVarInt();
+                $r->readVarInt();            // jumpBoost
+                if ($eaAction === 2) {       // STOP_SLEEPING：玩家点了「起床」
+                    unset($this->sleeping[$c->entityId]);
+                    $this->world->setTimeOfDay(0);
+                    $c->send(self::C_POS_LOOK, (new Writer())
+                        ->double($c->x)->double($c->y)->double($c->z)
+                        ->float($c->yaw)->float($c->pitch)->byte(0));
+                    $this->sendChat($c, ['text' => '起床了。', 'color' => 'gray'], 1);
+                }
+                break;
+
             case 0x09: // 切换手上的快捷栏格
                 $c->heldSlot = max(0, min(8, $r->readShort()));
                 break;
@@ -2464,6 +2478,53 @@ final class Server
                     self::biomeName($want), $tx2 >> 4, $tz2 >> 4,
                     (int) max(abs(($tx2 >> 4) - $pcx), abs(($tz2 >> 4) - $pcz))),
                     'color' => 'green'], 1);
+                break;
+
+            case 'findvillage':
+            case 'village':
+                $pcx2 = (int) floor($c->x) >> 4;
+                $pcz2 = (int) floor($c->z) >> 4;
+                $vFound = null;
+                for ($vr = 0; $vr <= 64 && $vFound === null; $vr++) {
+                    for ($vdx = -$vr; $vdx <= $vr && $vFound === null; $vdx++) {
+                        for ($vdz = -$vr; $vdz <= $vr; $vdz++) {
+                            if (max(abs($vdx), abs($vdz)) !== $vr) {
+                                continue;
+                            }
+                            $vcx = $pcx2 + $vdx;
+                            $vcz = $pcz2 + $vdz;
+                            if (!VillageGenerator::isVillageChunk($this->world->seed(), $vcx, $vcz)) {
+                                continue;
+                            }
+                            if (in_array($this->world->chunkBiomes($vcx, $vcz)[8 * 16 + 8] ?? -1,
+                                VillageGenerator::BIOMES, true)) {
+                                $vFound = [$vcx, $vcz];
+                                break;
+                            }
+                        }
+                    }
+                }
+                if ($vFound === null) {
+                    $this->sendChat($c, ['text' => '64 区块内没有村庄', 'color' => 'red'], 1);
+                    break;
+                }
+                [$vcx, $vcz] = $vFound;
+                $vc = $this->world->chunk($vcx, $vcz);
+                $vTop = 64;
+                for ($vy = 254; $vy > 1; $vy--) {
+                    if (($vc->blockState(8, $vy, 8) >> 4) !== 0) {
+                        $vTop = $vy + 1;
+                        break;
+                    }
+                }
+                $c->x = $vcx * 16 + 8.5;
+                $c->y = (float) $vTop;
+                $c->z = $vcz * 16 + 8.5;
+                $c->send(self::C_POS_LOOK, (new Writer())
+                    ->double($c->x)->double($c->y)->double($c->z)
+                    ->float($c->yaw)->float($c->pitch)->byte(0));
+                $this->sendChat($c, ['text' => sprintf('村庄在区块 %d,%d（%d 区块外），已传送',
+                    $vcx, $vcz, (int) max(abs($vcx - $pcx2), abs($vcz - $pcz2))), 'color' => 'green'], 1);
                 break;
 
             case 'spawn':
