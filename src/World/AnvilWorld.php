@@ -169,6 +169,8 @@ final class AnvilWorld
                 unset($this->migrated[$key]);
             }
 
+            $this->importChestTiles($chunk);
+
             return $this->chunks[$key] = $chunk;
         }
 
@@ -356,8 +358,111 @@ final class AnvilWorld
         return $n;
     }
 
+    /** 箱子存储（由 bin/server.php 注入；写区块时把箱子 TE 一并写进 NBT） */
+    private ?ChestStore $chests = null;
+
+    public function attachChestStore(ChestStore $chests): void
+    {
+        $this->chests = $chests;
+    }
+
+    /** 区块读回来后，把里面的箱子 TE 物品导入箱子存储（已有则跳过，不覆盖新数据） */
+    private function importChestTiles(Chunk $chunk): void
+    {
+        if ($this->chests === null) {
+            return;
+        }
+        $root = $chunk->root->value['Level'] ?? null;
+        if (!$root instanceof Tag) {
+            return;
+        }
+        $te = $root->value['TileEntities'] ?? null;
+        if (!$te instanceof Tag) {
+            return;
+        }
+
+        $imported = 0;
+        foreach ($te->value['items'] ?? [] as $t) {
+            if (!$t instanceof Tag) {
+                continue;
+            }
+            $id = $t->value['id']->value ?? '';
+            if ($id !== 'Chest') {
+                continue;
+            }
+            $x = (int) ($t->value['x']->value ?? 0);
+            $y = (int) ($t->value['y']->value ?? 0);
+            $z = (int) ($t->value['z']->value ?? 0);
+            if ($this->chests->has($x, $y, $z)) {
+                continue;
+            }
+            $slots = array_fill(0, 27, null);
+            foreach ($t->value['Items']->value['items'] ?? [] as $it) {
+                $s2 = (int) ($it->value['Slot']->value ?? -1);
+                if ($s2 < 0 || $s2 > 26) {
+                    continue;
+                }
+                $slots[$s2] = [
+                    'id' => (int) ($it->value['id']->value ?? 0),
+                    'count' => (int) ($it->value['Count']->value ?? 0),
+                    'damage' => (int) ($it->value['Damage']->value ?? 0),
+                ];
+            }
+            $this->chests->save($x, $y, $z, $slots);
+            $imported++;
+        }
+        if ($imported > 0) {
+            error_log(sprintf('[phpmcs] 区块 %d,%d 从 NBT 恢复了 %d 个箱子', $chunk->cx, $chunk->cz, $imported));
+        }
+    }
+
+    /** 箱子内容变了要重写这个区块，否则 .mca 里的 TE 是旧的 */
+    public function markChunkDirty(int $x, int $z): void
+    {
+        $key = ($x >> 4) . ',' . ($z >> 4);
+        if (isset($this->chunks[$key])) {
+            $this->chunks[$key]->dirty = true;
+        }
+    }
+
+    /** 把本区块的箱子写成 TileEntities，方块和数据就存在同一份区块里了 */
+    private function injectChestTiles(Chunk $chunk): void
+    {
+        if ($this->chests === null) {
+            return;
+        }
+
+        $list = [];
+        foreach ($this->chests->positionsInChunk($chunk->cx, $chunk->cz) as [$x, $y, $z]) {
+            $items = [];
+            foreach ($this->chests->load($x, $y, $z) as $slot => $it) {
+                if (!is_array($it) || !isset($it['id']) || (int) ($it['count'] ?? 0) <= 0) {
+                    continue;
+                }
+                $items[] = Tag::compound([
+                    'Slot' => Tag::byte((int) $slot),
+                    'id' => Tag::short((int) $it['id']),
+                    'Count' => Tag::byte((int) $it['count']),
+                    'Damage' => Tag::short((int) ($it['damage'] ?? 0)),
+                ]);
+            }
+            $list[] = Tag::compound([
+                'id' => Tag::str('Chest'),
+                'x' => Tag::int($x), 'y' => Tag::int($y), 'z' => Tag::int($z),
+                'Items' => Tag::list(Tag::COMPOUND, $items),
+            ]);
+        }
+
+        $root = $chunk->root->value['Level'] ?? null;
+        if ($root instanceof Tag) {
+            $root->value['TileEntities'] = Tag::list(Tag::COMPOUND, $list);
+        }
+    }
+
     private function writeChunk(Chunk $chunk): bool
     {
+        $this->injectChestTiles($chunk);
+
         $raw = Nbt::write($chunk->root);
         $compressed = gzcompress($raw, 6);
         if ($compressed === false) {

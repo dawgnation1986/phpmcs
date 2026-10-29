@@ -206,12 +206,15 @@ trait ChestTrait
                 ? [$chest['x'], $chest['y'], $chest['z']]
                 : [$partner[0], $partner[1], $partner[2]];
             $this->chests->save($first[0], $first[1], $first[2], array_slice($slots, 0, 27));
+            $this->world->markChunkDirty($first[0], $first[2]);
             $this->chests->save($second[0], $second[1], $second[2], array_slice($slots, 27, 27));
+            $this->world->markChunkDirty($second[0], $second[2]);
 
             return;
         }
 
         $this->chests->save($chest['x'], $chest['y'], $chest['z'], array_slice($slots, 0, 27));
+        $this->world->markChunkDirty($chest['x'], $chest['z']);
     }
 
     private function closeChest(Connection $c, bool $save = true): void
@@ -259,6 +262,7 @@ trait ChestTrait
                         ? array_slice($slots, 0, 27)
                         : array_slice($slots, 27, 27);
                     $this->chests->save($other[0], $other[1], $other[2], $keep);
+                    $this->world->markChunkDirty($other[0], $other[2]);
                 } else {
                     $drop = array_slice($slots, 0, 27);
                 }

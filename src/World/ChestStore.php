@@ -50,6 +50,26 @@ final class ChestStore
     }
 
     /** 这个坐标有没有容器记录（书架容器靠它区分普通书架）。 */
+    /** 某个区块里的所有箱子坐标 [[x,y,z], ...] */
+    public function positionsInChunk(int $cx, int $cz): array
+    {
+        $out = [];
+        foreach (array_keys($this->data) as $key) {
+            $p = explode(',', (string) $key);
+            if (count($p) !== 3) {
+                continue;
+            }
+            $x = (int) $p[0];
+            $y = (int) $p[1];
+            $z = (int) $p[2];
+            if (($x >> 4) === $cx && ($z >> 4) === $cz) {
+                $out[] = [$x, $y, $z];
+            }
+        }
+
+        return $out;
+    }
+
     public function has(int $x, int $y, int $z): bool
     {
         return isset($this->data[$x . ',' . $y . ',' . $z]);

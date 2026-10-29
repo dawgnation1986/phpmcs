@@ -109,6 +109,7 @@ $skins = new PhpMc\Skin\Skins(__DIR__ . '/../cache/skins.json', $allow);
 $chests = new PhpMc\World\ChestStore(
     __DIR__ . '/../cache/chests-' . substr(md5($worldDir), 0, 8) . '.json'
 );
+$world->attachChestStore($chests);
 $gamemode = $world->created ? 1 : $world->gameType();
 
 $server = new PhpMc\Server('0.0.0.0', $port, $motd, $world, $skins, $chests, $maxPlayers, $gamemode, $viewDistance ?? 3);
