@@ -55,6 +55,44 @@ final class TerrainGenerator
         return $this->layers->chunkBiomes($cx, $cz);
     }
 
+    /**
+     * 群系 → 树种配置。
+     * 17/18 是 oak/spruce/birch/jungle（meta 0/1/2/3），
+     * 161/162 是 2 号木头（acacia=0 / dark oak=1）。
+     */
+    private static function treeConfig(int $biome): ?array
+    {
+        return match ($biome) {
+            1 => ['count' => 1, 'log' => 17, 'logMeta' => 0, 'leaf' => 18, 'leafMeta' => 0,
+                  'minH' => 4, 'maxH' => 6, 'radius' => 2, 'canopyLayers' => 3],
+            4 => ['count' => 8, 'log' => 17, 'logMeta' => 0, 'leaf' => 18, 'leafMeta' => 0,
+                  'minH' => 4, 'maxH' => 7, 'radius' => 2, 'canopyLayers' => 3],
+            27, 28 => ['count' => 7, 'log' => 17, 'logMeta' => 2, 'leaf' => 18, 'leafMeta' => 2,
+                  'minH' => 5, 'maxH' => 7, 'radius' => 2, 'canopyLayers' => 3],
+            29 => ['count' => 9, 'log' => 162, 'logMeta' => 1, 'leaf' => 161, 'leafMeta' => 1,
+                  'minH' => 5, 'maxH' => 7, 'radius' => 3, 'canopyLayers' => 2],
+            5, 19 => ['count' => 8, 'log' => 17, 'logMeta' => 1, 'leaf' => 18, 'leafMeta' => 1,
+                  'minH' => 6, 'maxH' => 10, 'radius' => 1, 'canopyLayers' => 4],
+            30, 31 => ['count' => 6, 'log' => 17, 'logMeta' => 1, 'leaf' => 18, 'leafMeta' => 1,
+                  'minH' => 6, 'maxH' => 9, 'radius' => 1, 'canopyLayers' => 4],
+            32, 33 => ['count' => 7, 'log' => 17, 'logMeta' => 1, 'leaf' => 18, 'leafMeta' => 1,
+                  'minH' => 9, 'maxH' => 14, 'radius' => 2, 'canopyLayers' => 5],
+            21, 22 => ['count' => 11, 'log' => 17, 'logMeta' => 3, 'leaf' => 18, 'leafMeta' => 3,
+                  'minH' => 7, 'maxH' => 12, 'radius' => 2, 'canopyLayers' => 3],
+            23 => ['count' => 4, 'log' => 17, 'logMeta' => 3, 'leaf' => 18, 'leafMeta' => 3,
+                  'minH' => 6, 'maxH' => 9, 'radius' => 2, 'canopyLayers' => 3],
+            35, 36 => ['count' => 2, 'log' => 162, 'logMeta' => 0, 'leaf' => 161, 'leafMeta' => 0,
+                  'minH' => 5, 'maxH' => 6, 'radius' => 2, 'canopyLayers' => 2],
+            6 => ['count' => 3, 'log' => 17, 'logMeta' => 0, 'leaf' => 18, 'leafMeta' => 0,
+                  'minH' => 4, 'maxH' => 6, 'radius' => 2, 'canopyLayers' => 3],
+            3, 34 => ['count' => 2, 'log' => 17, 'logMeta' => 1, 'leaf' => 18, 'leafMeta' => 1,
+                  'minH' => 5, 'maxH' => 8, 'radius' => 1, 'canopyLayers' => 3],
+            12, 13 => ['count' => 1, 'log' => 17, 'logMeta' => 1, 'leaf' => 18, 'leafMeta' => 1,
+                  'minH' => 5, 'maxH' => 8, 'radius' => 1, 'canopyLayers' => 3],
+            default => null,
+        };
+    }
+
     public function generate(int $cx, int $cz): Tag
     {
         // 生成 y=0..255，和原版 1.8 一样是 16 个 section
@@ -329,7 +367,8 @@ final class TerrainGenerator
         (new OreDecorator($putOre))->decorate($this->seed, $cx, $cz);
 
         // ---------------- 树 ----------------
-        for ($t = 0; $t < 5; $t++) {
+        // 每个群系用自己的树种、高度和密度（原来是所有群系统一 5 棵橡树）
+        for ($t = 0; $t < 12; $t++) {
             $r1 = self::hash01($cx, $cz, $this->seed ^ (0x1000 + $t * 2));
             $r2 = self::hash01($cx, $cz, $this->seed ^ (0x1001 + $t * 2));
             $tx = 2 + (int) floor($r1 * 12);
@@ -338,32 +377,29 @@ final class TerrainGenerator
             $h = $surface[$idx];
             $biome = $biomeGrid[$idx];
 
-            $tree = match ($biome) {
-                4 => [17, 0, 18, 0, 0.62],   // 橡树
-                5 => [17, 1, 18, 1, 0.50],   // 云杉
-                6 => [17, 0, 18, 0, 0.42],   // 沼泽橡树
-                35 => [162, 0, 161, 0, 0.32], // 金合欢
-                3 => [17, 0, 18, 0, 0.10],   // 山地少量橡树
-                1 => [17, 0, 18, 0, 0.18],   // 平原少量橡树
-                default => null,
-            };
-            if ($tree === null || $h <= 64 || $get($tx, $h, $tz) !== 2) {
+            $cfg = self::treeConfig($biome);
+            if ($cfg === null || $t >= $cfg['count'] || $h <= 64) {
                 continue;
             }
-            [$logId, $logMeta, $leafId, $leafMeta, $chance] = $tree;
-            if (self::hash01($cx, $cz, $this->seed ^ (0x2000 + $t)) > $chance) {
-                continue;
+            if ($get($tx, $h, $tz) !== 2) {
+                continue;   // 只在草方块上长
             }
 
-            $th = $biome === 35 ? 5 + (int) floor($r1 * 3) : 4 + (int) floor($r1 * 3);
+            $th = $cfg['minH'] + (int) floor(
+                self::hash01($cx, $cz, $this->seed ^ (0x2100 + $t)) * ($cfg['maxH'] - $cfg['minH'] + 1)
+            );
             if ($h + $th + 2 > 255) {
                 continue;
             }
+
+            // 树干
             for ($dy = 1; $dy <= $th; $dy++) {
-                $set($tx, $h + $dy, $tz, $logId, $logMeta);
+                $set($tx, $h + $dy, $tz, $cfg['log'], $cfg['logMeta']);
             }
-            for ($dy = $th - 3; $dy <= $th; $dy++) {
-                $radius = $dy >= $th ? 1 : 2;
+
+            // 树冠：底下几层用配置的半径，顶上一层收窄
+            for ($dy = $th - $cfg['canopyLayers']; $dy <= $th; $dy++) {
+                $radius = ($dy >= $th) ? 1 : $cfg['radius'];
                 for ($dx = -$radius; $dx <= $radius; $dx++) {
                     for ($dz = -$radius; $dz <= $radius; $dz++) {
                         if ($dx * $dx + $dz * $dz > $radius * $radius + 1) {
@@ -371,18 +407,17 @@ final class TerrainGenerator
                         }
                         $lx = $tx + $dx;
                         $lz = $tz + $dz;
-                        $ly = $h + $dy;
                         if ($lx < 0 || $lx > 15 || $lz < 0 || $lz > 15) {
                             continue;
                         }
-                        if ($get($lx, $ly, $lz) === 0) {
-                            $set($lx, $ly, $lz, $leafId, $leafMeta);
+                        if ($get($lx, $h + $dy, $lz) === 0) {
+                            $set($lx, $h + $dy, $lz, $cfg['leaf'], $cfg['leafMeta']);
                         }
                     }
                 }
             }
             if ($get($tx, $h + $th + 1, $tz) === 0) {
-                $set($tx, $h + $th + 1, $tz, $leafId, $leafMeta);
+                $set($tx, $h + $th + 1, $tz, $cfg['leaf'], $cfg['leafMeta']);
             }
         }
 
