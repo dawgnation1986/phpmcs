@@ -77,7 +77,7 @@ final class Connection
     public bool $flying = false;
     /** 手上拿的是快捷栏第几格（0-8），客户端切物品时会告诉我们 */
     public int $heldSlot = 0;
-    public float $health = 20.0;
+    public float $health = 20.0;
     public int $food = 20;
     /** 开始下落时的高度，落地时用来算摔伤 */
     public float $fallFrom = -1.0;   // <0 表示没在下落
@@ -166,6 +166,8 @@ final class Server
     // 1.8：0x0B 是 Animation（挥手），0x0D 才是 Collect Item。
     // 写成 0x0B 的话客户端只会挥一下手，地上的东西永远不消失。
     private const C_ANIMATION = 0x0B;
+    /** S->C Use Bed：让客户端躺下；传 (-1,-1,-1) 是叫它起来 */
+    private const C_USE_BED = 0x0A;
     private const C_COLLECT_ITEM = 0x0D;
     private const C_SPAWN_OBJECT = 0x0E;
     private const C_ENTITY_VELOCITY = 0x12;
@@ -185,6 +187,9 @@ final class Server
     private array $conns = [];
 
     private int $nextEntityId = 1;
+
+    /** @var array<int,float> entityId => 该醒来的时间戳（睡觉用） */
+    private array $sleeping = [];
     /** @var array<int, array{id:int,count:int,meta:int,x:float,y:float,z:float,at:float,expire:float}> */
     private array $drops = [];
     /** @var array<string, array{0:int,1:int,2:int}> 改了方块的 section，要重发给客户端 */
@@ -925,9 +930,14 @@ final class Server
                 // 床：晚上右键直接睡到天亮（不模拟躺下动画，最省事也最稳）
                 if ($hitId === 26) {
                     if ($this->isNight()) {
-                        $this->world->setTimeOfDay(0);
-                        $this->sendChat($c, ['text' => '一觉睡到天亮。', 'color' => 'green'], 1);
-                        $this->log('  ' . $c->username . ' 睡觉 -> 天亮');
+                        // 先让客户端躺下（S0A Use Bed），3 秒后再叫他起来，
+                        // 这样能看到原版那种「躺一会儿」的过程。
+                        $c->send(self::C_USE_BED, (new Writer())
+                            ->varInt($c->entityId)
+                            ->raw($this->packPositionBytes($x, $y, $z)));
+                        $this->sleeping[$c->entityId] = microtime(true) + 3.0;
+                        $this->sendChat($c, ['text' => '你躺下了……', 'color' => 'gray'], 1);
+                        $this->log('  ' . $c->username . ' 躺下 @ ' . $x . ',' . $y . ',' . $z);
                     } else {
                         $this->sendChat($c, ['text' => '现在还是白天，睡不着。', 'color' => 'gray'], 1);
                     }
@@ -3502,6 +3512,31 @@ final class Server
         $this->tickFurnaces($now);
         $this->tickMobs($now);
         $this->tickSpawners($now);
+
+        // 睡觉：到点了就叫起来并跳到天亮
+        if ($this->sleeping !== []) {
+            foreach ($this->sleeping as $eid => $until) {
+                if ($now < $until) {
+                    continue;
+                }
+                unset($this->sleeping[$eid]);
+                $this->world->setTimeOfDay(0);
+                foreach ($this->conns as $sp2) {
+                    if ($sp2->closed || $sp2->entityId !== $eid) {
+                        continue;
+                    }
+                    // (-1,-1,-1) 让客户端结束躺姿，再补一个位置包把姿势复位
+                    $sp2->send(self::C_USE_BED, (new Writer())
+                        ->varInt($eid)
+                        ->raw($this->packPositionBytes(-1, -1, -1)));
+                    $sp2->send(self::C_POS_LOOK, (new Writer())
+                        ->double($sp2->x)->double($sp2->y)->double($sp2->z)
+                        ->float($sp2->yaw)->float($sp2->pitch)->byte(0));
+                    $this->sendChat($sp2, ['text' => '一觉睡到天亮。', 'color' => 'green'], 1);
+                    $this->log('  ' . $sp2->username . ' 起床 -> 天亮');
+                }
+            }
+        }
 
         // 每秒同步一次时间，客户端天空才会真的昼→夜
         if ($now - $this->lastTimeSync >= 1.0) {

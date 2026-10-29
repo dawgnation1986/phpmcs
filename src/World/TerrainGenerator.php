@@ -413,7 +413,10 @@ final class TerrainGenerator
             }
 
             // 树冠：底下几层用配置的半径，顶上一层收窄
-            for ($dy = $th - $cfg['canopyLayers']; $dy <= $th; $dy++) {
+            // 树冠最多占树干的 2/3，否则小树的树冠会把树干整个包住，
+            // 看起来就是「一个悬空的绿方块」。
+            $layers = min($cfg['canopyLayers'], max(1, $th - 2));
+            for ($dy = $th - $layers + 1; $dy <= $th; $dy++) {
                 $radius = ($dy >= $th) ? 1 : $cfg['radius'];
                 for ($dx = -$radius; $dx <= $radius; $dx++) {
                     for ($dz = -$radius; $dz <= $radius; $dz++) {
