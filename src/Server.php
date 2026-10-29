@@ -676,6 +676,24 @@ final class Server
             ->raw($nbt));
     }
 
+    /** 生成一艘船（实体，不是方块）。type=1，data=0 不带速度。 */
+    private function spawnBoat(float $px, float $py, float $pz, float $yaw): void
+    {
+        $eid = $this->nextEntityId++;
+        foreach ($this->players() as $p) {
+            $p->send(self::C_SPAWN_OBJECT, (new Writer())
+                ->varInt($eid)
+                ->byte(1)                       // 1 = 船
+                ->int((int) ($px * 32))
+                ->int((int) ($py * 32))
+                ->int((int) ($pz * 32))
+                ->byte(0)                       // pitch
+                ->byte((int) ($yaw / 360.0 * 256))   // yaw
+                ->int(0));                      // data=0：不带速度
+        }
+        $this->log(sprintf('  生成船 eid=%d @ %.1f,%.1f,%.1f', $eid, $px, $py, $pz));
+    }
+
     private function sendTileEntityToAll(int $x, int $y, int $z): void
     {
         foreach ($this->conns as $p) {
@@ -904,6 +922,18 @@ final class Server
                     $this->openChest($c, $x, $y, $z);
                     break;
                 }
+                // 床：晚上右键直接睡到天亮（不模拟躺下动画，最省事也最稳）
+                if ($hitId === 26) {
+                    if ($this->isNight()) {
+                        $this->world->setTimeOfDay(0);
+                        $this->sendChat($c, ['text' => '一觉睡到天亮。', 'color' => 'green'], 1);
+                        $this->log('  ' . $c->username . ' 睡觉 -> 天亮');
+                    } else {
+                        $this->sendChat($c, ['text' => '现在还是白天，睡不着。', 'color' => 'gray'], 1);
+                    }
+                    break;
+                }
+
                 if (in_array($hitId, [54, 146], true) || ($hitId === 47 && $this->chests->has($x, $y, $z))) {
                     $this->openChest($c, $x, $y, $z);
                     break;
@@ -1017,6 +1047,20 @@ final class Server
                     $this->log("  放 方块{$blockId} @ {$tx},{$ty},{$tz} 被拒：这个位置不能种");
                     break;
                 }
+                // 船不是方块，是实体：Spawn Object type=1
+                if ($itemId === 333) {
+                    $this->spawnBoat($x + 0.5, $y + 1.0, $z + 0.5, $c->yaw);
+                    $slot2 = 36 + $c->heldSlot;
+                    if (isset($c->inventory[$slot2])) {
+                        if (--$c->inventory[$slot2]['count'] <= 0) {
+                            unset($c->inventory[$slot2]);
+                        }
+                        $this->sendPlayerInventory($c);
+                    }
+                    $this->log("  放 船 @ {$x},{$y},{$z}");
+                    break;
+                }
+
                 $this->log("  放 方块{$blockId} @ {$tx},{$ty},{$tz}（物品 {$itemId}，点的 {$x},{$y},{$z} 面 {$face}）");
                 // 箱子(54)不再真的放进世界：客户端把它设成 BlockContainer 方块
                 // 会在 1.8.9 上抛 NPE，方块状态永远落不了地。

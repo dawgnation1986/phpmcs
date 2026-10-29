@@ -154,7 +154,17 @@ final class DensityField
                     $d2 = $lower[$i] / self::LOWER_LIMIT;
                     $d3 = $upper[$i] / self::UPPER_LIMIT;
                     $d4 = ($main[$i] / 10.0 + 1.0) / 2.0;
-                    $d5 = $d2 + ($d3 - $d2) * $d4 - $d1;   // denormalizeClamp
+                    // 原版 MathHelper.denormalizeClamp：d4 超出 [0,1] 要**夹住**，
+                    // 不能线性外推。d4 = (main/10+1)/2，main < -10 时它是负数，
+                    // 外推会得到 +180 这种荒谬值，地面就凭空长出一块高台。
+                    if ($d4 < 0.0) {
+                        $base = $d2;
+                    } elseif ($d4 > 1.0) {
+                        $base = $d3;
+                    } else {
+                        $base = $d2 + ($d3 - $d2) * $d4;
+                    }
+                    $d5 = $base - $d1;
 
                     if ($l1 > 29) {
                         $d6 = ($l1 - 29) / 3.0;
