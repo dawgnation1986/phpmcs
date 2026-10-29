@@ -626,6 +626,16 @@ final class Server
             ->raw($nbt));
     }
 
+    /** 给所有在线玩家发一次某格的 TE（放箱子/箱子变化后用） */
+    private function sendTileEntityToAll(int $x, int $y, int $z): void
+    {
+        foreach ($this->conns as $p) {
+            if (!$p->closed && $p->username !== '') {
+                $this->sendTileEntity($p, $x, $y, $z);
+            }
+        }
+    }
+
     private function broadcastTileEntity(int $x, int $y, int $z): void
     {
         foreach ($this->players() as $p) {
@@ -968,9 +978,15 @@ final class Server
                     $this->ensureFurnace($tx, $ty, $tz);
                     $blockId = 133;   // 必须和上面 changeBlock 的 id 一致，否则扣物品那步会判定失败
                 } elseif ($blockId === 54) {
-                    $this->changeBlock($tx, $ty, $tz, 47, 0);
+                    // 真的放箱子(54)，朝向按玩家 yaw 算（原版 BlockChest 的算法）：
+                    // 0→北(2) 1→东(5) 2→南(3) 3→西(4)
+                    $di = ((int) floor($c->yaw * 4.0 / 360.0 + 0.5)) & 3;
+                    $chestMeta = [2, 5, 3, 4][$di];
+                    $this->changeBlock($tx, $ty, $tz, 54, $chestMeta);
                     $this->chests->ensure($tx, $ty, $tz);
-                    $blockId = 47;
+                    // TE 立刻发一次，客户端才有东西可画
+                    $this->sendTileEntityToAll($tx, $ty, $tz);
+                    $blockId = 54;
                 } elseif ($blockId === 8 || $blockId === 9) {
                     // 水：放下源头，然后排队扩散
                     $this->placeFluid($tx, $ty, $tz, 0);
