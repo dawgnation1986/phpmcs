@@ -209,6 +209,41 @@ final class Server
         $this->lastSave = microtime(true);
     }
 
+    /**
+     * 预生成出生点周围的区块并写盘。
+     *
+     * 原版新世界时也是先卡在这里生成一片，再放人进来。
+     * 第二次启动时这些区块已存盘，读回来很快。
+     */
+    private function preGenerateSpawn(): void
+    {
+        [$sx, , $sz] = $this->world->spawnPoint();
+        $cx0 = $sx >> 4;
+        $cz0 = $sz >> 4;
+        $radius = max(3, min(6, $this->viewDistance + 1));
+        $side = $radius * 2 + 1;
+        $total = $side * $side;
+
+        $this->log("预生成出生点周围 {$total} 个区块（半径 {$radius}）...");
+        $t0 = microtime(true);
+        $done = 0;
+
+        for ($cx = $cx0 - $radius; $cx <= $cx0 + $radius; $cx++) {
+            for ($cz = $cz0 - $radius; $cz <= $cz0 + $radius; $cz++) {
+                $this->world->chunk($cx, $cz);
+                $done++;
+                if ($done % 16 === 0 || $done === $total) {
+                    $el = microtime(true) - $t0;
+                    $this->log(sprintf('  预生成 %d/%d  %.1fs', $done, $total, $el));
+                }
+            }
+        }
+
+        $saved = $this->world->save();
+        $this->log(sprintf('预生成完成：%d 个区块，存盘 %d 个，用时 %.1f 秒',
+            $total, $saved, microtime(true) - $t0));
+    }
+
     public function run(): void
     {
         $ctx = stream_context_create([
@@ -232,6 +267,9 @@ final class Server
         $this->log("MOTD: {$this->motd}");
         $this->log('存档: ' . ($this->world->created ? '新建' : '载入') . ' / 视距 '
             . $this->viewDistance . ' / 模式 ' . self::gameModeName($this->gamemode));
+
+        // 进服前先把出生点周围生成好：客户端连上来时不用干等区块
+        $this->preGenerateSpawn();
 
         while (true) {
             $read = [$master];
