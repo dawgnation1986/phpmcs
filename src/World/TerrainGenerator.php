@@ -366,6 +366,15 @@ final class TerrainGenerator
         };
         (new OreDecorator($putOre))->decorate($this->seed, $cx, $cz);
 
+        // ---------------- 村庄 ----------------
+        // 选址用原版 MapGenVillage 的公式，群系限定 平原/沙漠/热带草原
+        if (VillageGenerator::isVillageChunk($this->seed, $cx, $cz)) {
+            $centerBiome = $biomeGrid[8 * 16 + 8];
+            if (in_array($centerBiome, VillageGenerator::BIOMES, true)) {
+                VillageGenerator::build($cx, $cz, $centerBiome, $surface, $set, $get);
+            }
+        }
+
         // ---------------- 树 ----------------
         // 每个群系用自己的树种、高度和密度（原来是所有群系统一 5 棵橡树）
         for ($t = 0; $t < 12; $t++) {
