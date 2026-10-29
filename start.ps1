@@ -4,7 +4,26 @@ Set-Location $PSScriptRoot
 
 $Port  = 25565
 $Motd  = 'PHP 写的 1.8.9 - 新的世界'
-$World = Join-Path $PSScriptRoot 'world'
+
+# 有 server.properties 就以它为准（端口/motd/存档目录）
+$propFile = Join-Path $PSScriptRoot 'server.properties'
+if (Test-Path $propFile) {
+    foreach ($line in Get-Content -LiteralPath $propFile -Encoding UTF8) {
+        $t = $line.Trim()
+        if ($t -eq '' -or $t.StartsWith('#')) { continue }
+        $i = $t.IndexOf('=')
+        if ($i -lt 1) { continue }
+        $k = $t.Substring(0, $i).Trim()
+        $v = $t.Substring($i + 1).Trim()
+        switch ($k) {
+            'server-port' { if ($v -match '^\d+$') { $Port = [int]$v } }
+            'motd'        { if ($v -ne '') { $Motd = $v } }
+            'level-name'  { if ($v -ne '') { $WorldName = $v } }
+        }
+    }
+}
+if (-not $WorldName) { $WorldName = 'world' }
+$World = Join-Path $PSScriptRoot $WorldName
 $Php   = 'php'
 
 $phpCmd = Get-Command php -ErrorAction SilentlyContinue
