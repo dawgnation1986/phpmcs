@@ -2437,7 +2437,8 @@ final class Server
                     $d = max(abs($gx - (int) $c->x), abs($gz - (int) $c->z));
                     if ($d < $bestD) {
                         $bestD = $d;
-                        $found = [$gx >> 4, $gz >> 4];
+                        // 记具体那一格（方块坐标），不是区块中心
+                        $found = [$gx, $gz];
                     }
                 }
                 if ($found === null) {
@@ -2445,22 +2446,23 @@ final class Server
                     break;
                 }
                 [$tx2, $tz2] = $found;
-                $chunk = $this->world->chunk($tx2, $tz2);
+                $chunk = $this->world->chunk($tx2 >> 4, $tz2 >> 4);
                 $top = 64;
                 for ($y = 254; $y > 1; $y--) {
-                    if (($chunk->blockState(8, $y, 8) >> 4) !== 0) {
+                    if (($chunk->blockState($tx2 & 15, $y, $tz2 & 15) >> 4) !== 0) {
                         $top = $y + 1;
                         break;
                     }
                 }
-                $c->x = $tx2 * 16 + 8.5;
+                $c->x = $tx2 + 0.5;
                 $c->y = (float) $top;
-                $c->z = $tz2 * 16 + 8.5;
+                $c->z = $tz2 + 0.5;
                 $c->send(self::C_POS_LOOK, (new Writer())
                     ->double($c->x)->double($c->y)->double($c->z)
                     ->float($c->yaw)->float($c->pitch)->byte(0));
                 $this->sendChat($c, ['text' => sprintf('%s 在区块 %d,%d（%d 区块外），已传送',
-                    self::biomeName($want), $tx2, $tz2, (int) max(abs($tx2 - $pcx), abs($tz2 - $pcz))),
+                    self::biomeName($want), $tx2 >> 4, $tz2 >> 4,
+                    (int) max(abs(($tx2 >> 4) - $pcx), abs(($tz2 >> 4) - $pcz))),
                     'color' => 'green'], 1);
                 break;
 
