@@ -1499,6 +1499,15 @@ final class Server
                     $this->clickFurnace($c, $slot, $button, $mode, $cursor);
                 } elseif ($windowId === 1) {
                     $this->clickChest($c, $slot, $button, $mode, $cursor);
+                    // 末影箱每次点击后立刻落盘：原来只在「关闭界面」时保存，
+                    // 玩家直接退出游戏（或服务端重启）就丢数据，
+                    // 表现就是「第二次进服东西没了」。
+                    if (!empty($c->chest['ender'])) {
+                        $this->saveEnderSlots(
+                            (string) ($c->chest['owner'] ?? ''),
+                            array_slice($c->chest['slots'] ?? [], 0, 27)
+                        );
+                    }
                 }
                 // 每次真正改变槽位后整窗覆盖一次，客户端本地预测错了也会被纠正，
                 // 不会出现「Shift 出一堆」「合成完又消失」这种分叉。
