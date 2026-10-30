@@ -2070,6 +2070,7 @@ final class Server
      * 概率类的（树叶、砂砾、枯木、高草）单独在下面处理。
      */
     private const DROPS = [
+        62 => [61, 1],      // 点亮的熔炉 -> 普通熔炉（62 本身没有物品！）
         1 => [4, 1],        // 石头 -> 圆石
         2 => [3, 1],        // 草方块 -> 土
         12 => [12, 1],      // 沙子
@@ -2116,7 +2117,7 @@ final class Server
      * 客户端塞进背包就 NullPointerException（日志里成片出现）。
      */
     private const NO_ITEM = [
-        26, 34, 36, 51, 55, 59, 63, 64, 68, 71, 75, 93, 94,
+        26, 34, 36, 51, 55, 59, 62, 63, 64, 68, 71, 75, 93, 94,
         104, 105, 132, 143, 144, 149, 150, 193, 194, 195, 196, 197,
     ];
 
@@ -2187,14 +2188,20 @@ final class Server
             return [0, 0];
         }
         if (isset(self::DROPS[$id])) {
-            return self::DROPS[$id];
+            [$did, $dcnt] = self::DROPS[$id];
+            // 兜底：目标 id 没有对应物品时不要掉。
+            // 客户端拿到「item 为 null 的 ItemStack」会在 tick 时 NPE 崩溃，
+            // 而且这个坏物品会存进 playerdata，下次进服立刻再崩。
+            return self::hasItem($did) ? [$did, $dcnt] : [0, 0];
         }
 
         if (!self::hasItem($id)) {
             return [0, 0];   // 没物品形态的方块，掉了也只会让客户端崩
         }
 
-        return [$id, 1];     // 大多数建筑方块掉自己
+        // 大多数建筑方块掉自己；但没有物品形态的 id（如 62 点亮的熔炉）
+        // 绝不能掉出去 —— 客户端拿到 item 为 null 的 ItemStack 会 tick 崩溃。
+        return self::hasItem($id) ? [$id, 1] : [0, 0];
     }
 
     /**
