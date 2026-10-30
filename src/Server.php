@@ -148,6 +148,7 @@ final class Server
     use SpawnerTrait;
     use BannerTrait;
     use BrewingTrait;
+    use FarmingTrait;
     use FluidTrait;
     use RedstoneTrait;
 
@@ -672,6 +673,14 @@ final class Server
             $this->sendSign($c, $sgx, $sgy, $sgz, $slines);
         }
 
+        // 作物：把这一块里的作物登记进生长表
+        foreach (self::CROP_MAX_AGE as $cid => $_) {
+            foreach ($chunk->blockPositions($cid) as [$cx2, $cy2, $cz2]) {
+                $age2 = $chunk->blockState($cx2 & 15, $cy2, $cz2 & 15) & 15;
+                $this->registerCrop($cx2, $cy2, $cz2, $cid, $age2);
+            }
+        }
+
         // 旗帜：0x35 action=6
         foreach ($chunk->blockPositions(176) as [$bnx, $bny, $bnz]) {
             $this->sendBanner($c, $bnx, $bny, $bnz);
@@ -1109,6 +1118,23 @@ final class Server
                 }
                 // 床：晚上右键直接睡到天亮（不模拟躺下动画，最省事也最稳）
                 // 末影箱：每个玩家一份 27 格，跨箱子共享
+                // 骨粉（351:15）催熟作物
+                if ($itemId === 351) {
+                    $hs2 = 36 + $c->heldSlot;
+                    $heldDmg = (int) ($c->inventory[$hs2]['damage'] ?? -1);
+                    if ($heldDmg === 15 && $this->boneMeal($x, $y, $z)) {
+                        if (isset($c->inventory[$hs2])) {
+                            if (--$c->inventory[$hs2]['count'] <= 0) {
+                                unset($c->inventory[$hs2]);
+                            }
+                            $this->sendPlayerInventory($c);
+                        }
+                        $this->log("  {$c->username} 骨粉催熟 @ {$x},{$y},{$z}");
+                        break;
+                    }
+                    // 不是骨粉或者没催熟成功：继续走原来的放置逻辑
+                }
+
                 if ($hitId === 117) {
                     $this->openBrewingStand($c, $x, $y, $z);
                     break;
@@ -1740,6 +1766,11 @@ final class Server
             }
         }
     
+        // 作物：登记进生长表
+        if (isset(self::CROP_MAX_AGE[$id])) {
+            $this->registerCrop($x, $y, $z, $id, $meta);
+        }
+
         // 告示牌：放下就建一个空 TE，客户端编辑时才有地方存
         if ($id === 63 || $id === 68) {
             $this->world->setSignText($x, $y, $z, ['', '', '', '']);
@@ -1834,6 +1865,10 @@ final class Server
                 $this->removeFurnace($x, $y, $z);
                 $this->log("  熔炉被打掉，内容物已掉落 ({$fk})");
             }
+        }
+
+        if (isset(self::CROP_MAX_AGE[$id])) {
+            $this->unregisterCrop($x, $y, $z);
         }
 
         if ($id === 176 || $id === 177) {
@@ -4037,6 +4072,7 @@ final class Server
         $this->tickFluids($now);
         $this->tickFurnaces($now);
         $this->tickBrewing($now);
+        $this->tickCrops($now);
         $this->tickMobs($now);
         $this->tickSpawners($now);
 
