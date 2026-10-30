@@ -30,6 +30,40 @@ trait CraftingTrait
             }
         }
 
+        // 单个物品的转换（原版是无序配方，客户端本地也会算出来，
+        // 服务端不认就会出现「结果闪一下就消失」）
+        if (count($items) === 1) {
+            $it = $items[0];
+            switch ($it['id']) {
+                case 369: return ['id' => 377, 'count' => 2, 'damage' => 0];   // 烈焰棒 -> 2 烈焰粉
+                case 352: return ['id' => 351, 'count' => 3, 'damage' => 15];  // 骨头 -> 3 骨粉
+                case 338: return ['id' => 353, 'count' => 1, 'damage' => 0];   // 甘蔗 -> 糖
+                case 348: return ['id' => 351, 'count' => 1, 'damage' => 1];   // 墨囊 -> 墨汁
+                case 39:  return ['id' => 351, 'count' => 2, 'damage' => 3];   // 棕色蘑菇 -> 可可豆(近似)
+            }
+            // 3 根线 -> 1 羊毛（竖着排）
+            if ($it['id'] === 287) {
+                $n = count(array_filter($g, static fn ($x) => $x !== null && $x['id'] === 287));
+                if ($n === 3) {
+                    return ['id' => 35, 'count' => 1, 'damage' => 0];
+                }
+            }
+        }
+
+        // 4 石头 -> 4 石砖
+        if (count($items) === 4
+            && $g[0] !== null && $g[1] !== null && $g[2] !== null && $g[3] !== null
+            && $g[0]['id'] === 1 && $g[1]['id'] === 1 && $g[2]['id'] === 1 && $g[3]['id'] === 1) {
+            return ['id' => 98, 'count' => 4, 'damage' => 0];
+        }
+
+        // 4 沙子 -> 4 沙石
+        if (count($items) === 4
+            && $g[0] !== null && $g[1] !== null && $g[2] !== null && $g[3] !== null
+            && $g[0]['id'] === 12 && $g[1]['id'] === 12 && $g[2]['id'] === 12 && $g[3]['id'] === 12) {
+            return ['id' => 24, 'count' => 1, 'damage' => 0];
+        }
+
         // 2 木板竖着 -> 4 木棍
         if (count($items) === 2 && $items[0]['id'] === 5 && $items[1]['id'] === 5) {
             if (($g[0] !== null && $g[2] !== null && $g[1] === null && $g[3] === null)
