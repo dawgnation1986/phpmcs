@@ -1118,6 +1118,29 @@ final class Server
                 }
                 // 床：晚上右键直接睡到天亮（不模拟躺下动画，最省事也最稳）
                 // 末影箱：每个玩家一份 27 格，跨箱子共享
+                // 锄头锄地：草/土 -> 耕地(60)，耐久-1
+                if (in_array($itemId, [290, 291, 292, 293, 294], true)
+                    && ($hitId === 2 || $hitId === 3)) {
+                    $above = $this->world->chunk($x >> 4, $z >> 4)
+                        ->blockState($x & 15, $y + 1, $z & 15);
+                    if ($above === 0) {      // 上面不能有方块
+                        $this->changeBlock($x, $y, $z, 60, 0);
+                        $hs3 = 36 + $c->heldSlot;
+                        if (isset($c->inventory[$hs3])) {
+                            $it3 = $c->inventory[$hs3];
+                            $it3['damage'] = (int) ($it3['damage'] ?? 0) + 1;
+                            if ($it3['damage'] >= (self::TOOL_MAX[$itemId] ?? 60)) {
+                                unset($c->inventory[$hs3]);
+                            } else {
+                                $c->inventory[$hs3] = $it3;
+                            }
+                            $this->sendPlayerInventory($c);
+                        }
+                        $this->log("  {$c->username} 锄地 @ {$x},{$y},{$z}");
+                        break;
+                    }
+                }
+
                 // 骨粉（351:15）催熟作物
                 if ($itemId === 351) {
                     $hs2 = 36 + $c->heldSlot;
@@ -1848,6 +1871,26 @@ final class Server
         $meta = $state & 0x0F;
         if ($id === 7) {
             return; // 基岩挖不动
+        }
+
+        // 挖掉方块后，把相邻的水/岩浆叫醒 —— 流体的扩散是队列驱动的，
+        // 自然生成的水从来不在队列里，所以以前挖到海边水也不会流过来。
+        foreach ([[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]] as [$dx, $dy, $dz]) {
+            $nx = $x + $dx;
+            $ny = $y + $dy;
+            $nz = $z + $dz;
+            if ($ny < 0 || $ny > 255) {
+                continue;
+            }
+            $nst = $this->world->chunk($nx >> 4, $nz >> 4)
+                ->blockState($nx & 15, $ny, $nz & 15);
+            $nid = $nst >> 4;
+            $nmeta = $nst & 15;
+            if ($nid === 8 || $nid === 9) {
+                $this->startFluid($nx, $ny, $nz, 0, $nmeta);
+            } elseif ($nid === 10 || $nid === 11) {
+                $this->startFluid($nx, $ny, $nz, 1, $nmeta);
+            }
         }
 
         if ($id === 61 || $id === 62) {
