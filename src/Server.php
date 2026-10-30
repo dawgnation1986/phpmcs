@@ -140,6 +140,7 @@ final class Server
     use MobTrait;
     use FurnaceTrait;
     use SpawnerTrait;
+    use BannerTrait;
     use FluidTrait;
     use RedstoneTrait;
 
@@ -627,6 +628,14 @@ final class Server
                 continue;
             }
             $this->sendSign($c, $sgx, $sgy, $sgz, $slines);
+        }
+
+        // 旗帜：0x35 action=6
+        foreach ($chunk->blockPositions(176) as [$bnx, $bny, $bnz]) {
+            $this->sendBanner($c, $bnx, $bny, $bnz);
+        }
+        foreach ($chunk->blockPositions(177) as [$bnx, $bny, $bnz]) {
+            $this->sendBanner($c, $bnx, $bny, $bnz);
         }
 
         // 刷怪笼：登记进内存索引 + 发 0x35（action=1 才是刷怪笼分支）
@@ -1140,6 +1149,22 @@ final class Server
                     $this->changeBlock($tx, $ty, $tz, 61, $furnaceMeta);
                     $this->ensureFurnace($tx, $ty, $tz);
                     $blockId = 61;
+                } elseif ($blockId === 176) {
+                    // 旗帜：站立式 meta 是按 yaw 的朝向（0~15），挂墙的用点击面
+                    if ($face >= 2) {
+                        $blockId = 177;
+                        $bm = $face;
+                    } else {
+                        $bm = ((int) floor(($c->yaw + 180.0) * 16.0 / 360.0 + 0.5)) & 15;
+                    }
+                    $this->changeBlock($tx, $ty, $tz, $blockId, $bm);
+                    // 颜色来自手上那面旗帜的 damage（0~15）
+                    $heldSlot3 = 36 + $c->heldSlot;
+                    $bcolor = (int) ($c->inventory[$heldSlot3]['damage'] ?? 0) & 15;
+                    $this->setBanner($tx, $ty, $tz, $bcolor);
+                    foreach ($this->players() as $bp) {
+                        $this->sendBanner($bp, $tx, $ty, $tz);
+                    }
                 } elseif ($blockId === 65 || $blockId === 68) {
                     // 梯子 / 墙上的告示牌：meta 表示「贴在哪一面墙」，必须是 2~5。
                     // 写 0 客户端画不出来 —— 这就是「梯子 reload 后消失」的真相：
@@ -1556,6 +1581,10 @@ final class Server
             }
         }
 
+        if ($id === 176 || $id === 177) {
+            $this->removeBanner($x, $y, $z);
+        }
+
         if ($id === 26) {
             // 床是两格：meta 的 0x8 位标记「这是头」，低两位是朝向。
             // 打掉任意一半，另一半也要一起清 —— 之前只掉脚那一半，
@@ -1857,6 +1886,7 @@ final class Server
         431 => 197,  // 深色橡木门
         355 => 26,   // 床
         397 => 144,  // 头颅（生物头颅/玩家头颅都是 144）
+        425 => 176,  // 旗帜（站立式 176，挂墙的 177 不单独发物品）
         295 => 59,   // 小麦种子 -> 作物
         338 => 83,   // 甘蔗 -> 芦苇
         372 => 115,  // 地狱疣
