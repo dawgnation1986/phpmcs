@@ -29,7 +29,6 @@ trait FurnaceTrait
         21 => 351,   // 青金石矿 -> 蓝色染料(meta 4)
         12 => 20,    // 沙子 -> 玻璃
         4 => 1,      // 圆石 -> 石头
-        1 => 1,      // 石头 -> 石头（占位，保持原行为）
         337 => 336,  // 黏土球 -> 红砖
         82 => 172,   // 黏土块 -> 硬化黏土
         81 => 351,   // 仙人掌 -> 绿色染料(meta 2)
@@ -40,7 +39,8 @@ trait FurnaceTrait
         365 => 366,  // 生鸡肉 -> 熟鸡肉
         349 => 350,  // 生鱼 -> 熟鱼
         392 => 393,  // 生马铃薯 -> 烤马铃薯
-        103 => 360,  // 西瓜 -> 西瓜片
+        153 => 406,  // 下界石英矿 -> 下界石英
+        12  => 20,   // 沙子 -> 玻璃（重复，保留幂等）
     ];
 
     /** 少数产物带 meta（木炭、染料） */
@@ -365,6 +365,36 @@ trait FurnaceTrait
         }
         unset($f);
 
+        // 燃烧时把方块设成「点亮」状态（meta 的 0x8 位），灭了再清掉。
+        // 原版就是这样让炉口发亮的，我们之前从没改过方块状态，所以烧着也黑着。
+        foreach ($this->furnaces as $k2 => $f2) {
+            $parts2 = explode(',', (string) $k2);
+            if (count($parts2) !== 3) {
+                continue;
+            }
+            [$bx, $by, $bz] = [(int) $parts2[0], (int) $parts2[1], (int) $parts2[2]];
+            $chunk2 = $this->world->chunk($bx >> 4, $bz >> 4);
+            $state = $chunk2->blockState($bx & 15, $by, $bz & 15);
+            if (($state >> 4) !== 61) {
+                continue;   // 已经不是熔炉了
+            }
+            $meta = $state & 15;
+            $wantLit = ((int) ($f2['burn'] ?? 0)) > 0;
+            $isLit = ($meta & 8) !== 0;
+            if ($wantLit === $isLit) {
+                continue;
+            }
+            $newMeta = $wantLit ? ($meta | 8) : ($meta & ~8);
+            if ($chunk2->setBlock($bx & 15, $by, $bz & 15, 61, $newMeta)) {
+                $chunk2->dirty = true;
+                foreach ($this->players() as $pp) {
+                    $pp->send(self::C_BLOCK_CHANGE, (new Writer())
+                        ->raw($this->packPositionBytes($bx, $by, $bz))
+                        ->varInt((61 << 4) | $newMeta));
+                }
+            }
+        }
+
         if ($changed) {
             $this->saveFurnaces();
             foreach ($this->players() as $p) {
@@ -389,8 +419,12 @@ trait FurnaceTrait
                     || (int) $fp->furnace['z'] !== $fz) {
                     continue;
                 }
+                // 1.8 的四个属性：0=余火 1=燃料总时长 2=已烧时长 3=总时长
+                // （之前写成 0/1/2，整体错位，所以箭头永远不动）
                 foreach ([[0, min(200, (int) ($ff['burn'] ?? 0))],
-                          [1, min(200, (int) ($ff['cook'] ?? 0))], [2, 200]] as [$prop, $val]) {
+                          [1, min(200, (int) ($ff['maxBurn'] ?? 200))],
+                          [2, min(200, (int) ($ff['cook'] ?? 0))],
+                          [3, 200]] as [$prop, $val]) {
                     $fp->send(self::C_WINDOW_PROPERTY, (new Writer())
                         ->byte(1)->short($prop)->short($val));
                 }
