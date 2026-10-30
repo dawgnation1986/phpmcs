@@ -1212,7 +1212,16 @@ final class Server
                     $above = $this->world->chunk($x >> 4, $z >> 4)
                         ->blockState($x & 15, $y + 1, $z & 15);
                     if ($above === 0) {      // 上面不能有方块
-                        $this->changeBlock($x, $y, $z, 60, 0);
+                        // 不能走 changeBlock —— 它是「放置」逻辑，会拒收实心方块。
+                        // 锄地本质是把草/土替换成耕地，直接写 + 广播。
+                        $ch = $this->world->chunk($x >> 4, $z >> 4);
+                        $ch->setBlock($x & 15, $y, $z & 15, 60, 0);
+                        $ch->dirty = true;
+                        foreach ($this->players() as $p2) {
+                            $p2->send(self::C_BLOCK_CHANGE, (new Writer())
+                                ->raw($this->packPositionBytes($x, $y, $z))
+                                ->varInt(60 << 4));
+                        }
                         $hs3 = 36 + $c->heldSlot;
                         if (isset($c->inventory[$hs3])) {
                             $it3 = $c->inventory[$hs3];
@@ -1616,13 +1625,16 @@ final class Server
                     $this->resetDrag($c);
                 }
                 if ($mode === 5) {
-                    // 拖动暂时停用：窗口拖动会和点击路径改同一份槽位数据，
-                    // 表现为「煤炭凭空消失」「Shift 填充后再开 GUI 物品多一份」。
-                    // 先把它关掉（点一下、Shift 点都还能用），等点击路径稳定了再开。
-                    $this->resetDrag($c);
-                    if ($slot === -999 && $c->cursor !== null) {
-                        // 把光标上的东西还给玩家，别让它挂在手上丢掉
-                        $this->returnCursor($c);
+                    // 工作台(2) 和背包(0) 的拖动恢复 —— 拆分堆叠全靠它。
+                    // 容器（箱子/熔炉/末影箱）仍然禁用：那几个窗口的拖动
+                    // 之前会吞物品，还没查清。
+                    if ($windowId === 2 || $windowId === 0) {
+                        $this->handleDrag($c, $windowId, $slot, $button);
+                    } else {
+                        $this->resetDrag($c);
+                        if ($slot === -999 && $c->cursor !== null) {
+                            $this->returnCursor($c);
+                        }
                     }
                 } elseif ($windowId === 2) {
                     $this->clickWorkbench($c, $slot, $button, $mode, $cursor);
