@@ -1118,46 +1118,6 @@ final class Server
                 }
                 // 床：晚上右键直接睡到天亮（不模拟躺下动画，最省事也最稳）
                 // 末影箱：每个玩家一份 27 格，跨箱子共享
-                // 锄头锄地：草/土 -> 耕地(60)，耐久-1
-                if (in_array($itemId, [290, 291, 292, 293, 294], true)
-                    && ($hitId === 2 || $hitId === 3)) {
-                    $above = $this->world->chunk($x >> 4, $z >> 4)
-                        ->blockState($x & 15, $y + 1, $z & 15);
-                    if ($above === 0) {      // 上面不能有方块
-                        $this->changeBlock($x, $y, $z, 60, 0);
-                        $hs3 = 36 + $c->heldSlot;
-                        if (isset($c->inventory[$hs3])) {
-                            $it3 = $c->inventory[$hs3];
-                            $it3['damage'] = (int) ($it3['damage'] ?? 0) + 1;
-                            if ($it3['damage'] >= (self::TOOL_MAX[$itemId] ?? 60)) {
-                                unset($c->inventory[$hs3]);
-                            } else {
-                                $c->inventory[$hs3] = $it3;
-                            }
-                            $this->sendPlayerInventory($c);
-                        }
-                        $this->log("  {$c->username} 锄地 @ {$x},{$y},{$z}");
-                        break;
-                    }
-                }
-
-                // 骨粉（351:15）催熟作物
-                if ($itemId === 351) {
-                    $hs2 = 36 + $c->heldSlot;
-                    $heldDmg = (int) ($c->inventory[$hs2]['damage'] ?? -1);
-                    if ($heldDmg === 15 && $this->boneMeal($x, $y, $z)) {
-                        if (isset($c->inventory[$hs2])) {
-                            if (--$c->inventory[$hs2]['count'] <= 0) {
-                                unset($c->inventory[$hs2]);
-                            }
-                            $this->sendPlayerInventory($c);
-                        }
-                        $this->log("  {$c->username} 骨粉催熟 @ {$x},{$y},{$z}");
-                        break;
-                    }
-                    // 不是骨粉或者没催熟成功：继续走原来的放置逻辑
-                }
-
                 if ($hitId === 117) {
                     $this->openBrewingStand($c, $x, $y, $z);
                     break;
@@ -1246,6 +1206,46 @@ final class Server
                 }
 
                 $itemId = $r->readShort();
+                // 锄头锄地：草/土 -> 耕地(60)，耐久-1
+                if (in_array($itemId, [290, 291, 292, 293, 294], true)
+                    && ($hitId === 2 || $hitId === 3)) {
+                    $above = $this->world->chunk($x >> 4, $z >> 4)
+                        ->blockState($x & 15, $y + 1, $z & 15);
+                    if ($above === 0) {      // 上面不能有方块
+                        $this->changeBlock($x, $y, $z, 60, 0);
+                        $hs3 = 36 + $c->heldSlot;
+                        if (isset($c->inventory[$hs3])) {
+                            $it3 = $c->inventory[$hs3];
+                            $it3['damage'] = (int) ($it3['damage'] ?? 0) + 1;
+                            if ($it3['damage'] >= (self::TOOL_MAX[$itemId] ?? 60)) {
+                                unset($c->inventory[$hs3]);
+                            } else {
+                                $c->inventory[$hs3] = $it3;
+                            }
+                            $this->sendPlayerInventory($c);
+                        }
+                        $this->log("  {$c->username} 锄地 @ {$x},{$y},{$z}");
+                        break;
+                    }
+                }
+
+                // 骨粉（351:15）催熟作物
+                if ($itemId === 351) {
+                    $hs2 = 36 + $c->heldSlot;
+                    $heldDmg = (int) ($c->inventory[$hs2]['damage'] ?? -1);
+                    if ($heldDmg === 15 && $this->boneMeal($x, $y, $z)) {
+                        if (isset($c->inventory[$hs2])) {
+                            if (--$c->inventory[$hs2]['count'] <= 0) {
+                                unset($c->inventory[$hs2]);
+                            }
+                            $this->sendPlayerInventory($c);
+                        }
+                        $this->log("  {$c->username} 骨粉催熟 @ {$x},{$y},{$z}");
+                        break;
+                    }
+                    // 不是骨粉或者没催熟成功：继续走原来的放置逻辑
+                }
+
 
                 // 水桶(326) / 岩浆桶(327)：不是方块，单独处理
                 if ($itemId === 326 || $itemId === 327) {
