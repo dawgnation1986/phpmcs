@@ -15,6 +15,66 @@ trait EnderChestTrait
     /** @var array<string, array> 小写玩家名 => 27 格 */
     private array $enderInvs = [];
 
+    /**
+     * 哪些「黑曜石」其实是末影箱。
+     *
+     * 1.8 客户端不肯渲染 TE 方块（箱子当初就被换成了书架 47），
+     * 末影箱同理 —— 服务端发 130 它也不画。所以世界数据里存 49（黑曜石），
+     * 用这张表记住哪些位置是末影箱。
+     */
+    private array $enderPositions = [];
+    private bool $enderPosLoaded = false;
+
+    private function enderPosFile(): string
+    {
+        return dirname(__DIR__) . DIRECTORY_SEPARATOR . 'cache' . DIRECTORY_SEPARATOR . 'ender-positions.json';
+    }
+
+    private function loadEnderPositions(): void
+    {
+        if ($this->enderPosLoaded) {
+            return;
+        }
+        $this->enderPosLoaded = true;
+        $f = $this->enderPosFile();
+        if (is_file($f)) {
+            $j = json_decode((string) @file_get_contents($f), true);
+            if (is_array($j)) {
+                $this->enderPositions = $j;
+            }
+        }
+    }
+
+    private function saveEnderPositions(): void
+    {
+        $dir = dirname($this->enderPosFile());
+        if (!is_dir($dir)) {
+            @mkdir($dir, 0777, true);
+        }
+        @file_put_contents($this->enderPosFile(), json_encode($this->enderPositions), LOCK_EX);
+    }
+
+    public function markEnderChest(int $x, int $y, int $z): void
+    {
+        $this->loadEnderPositions();
+        $this->enderPositions[$x . ',' . $y . ',' . $z] = 1;
+        $this->saveEnderPositions();
+    }
+
+    public function isEnderChest(int $x, int $y, int $z): bool
+    {
+        $this->loadEnderPositions();
+
+        return isset($this->enderPositions[$x . ',' . $y . ',' . $z]);
+    }
+
+    public function unmarkEnderChest(int $x, int $y, int $z): void
+    {
+        $this->loadEnderPositions();
+        unset($this->enderPositions[$x . ',' . $y . ',' . $z]);
+        $this->saveEnderPositions();
+    }
+
     /** @var array 玩家名 => ChestStore（末影箱专用） */
     private array $enderStores = [];
     private bool $enderLoaded = false;

@@ -1062,7 +1062,8 @@ final class Server
                 }
                 // 床：晚上右键直接睡到天亮（不模拟躺下动画，最省事也最稳）
                 // 末影箱：每个玩家一份 27 格，跨箱子共享
-                if ($hitId === 130) {
+                // 末影箱在世界数据里存成黑曜石(49)，用坐标表区分
+                if ($hitId === 49 && $this->isEnderChest($x, $y, $z)) {
                     $this->openEnderChest($c);
                     break;
                 }
@@ -1309,6 +1310,11 @@ final class Server
                     $this->changeBlock($tx, $ty, $tz, 61, $furnaceMeta);
                     $this->ensureFurnace($tx, $ty, $tz);
                     $blockId = 61;
+                } elseif ($blockId === 130) {
+                    // 1.8 客户端不渲染 TE 方块（130），所以存成黑曜石(49) + 坐标表
+                    $this->changeBlock($tx, $ty, $tz, 49, 0);
+                    $this->markEnderChest($tx, $ty, $tz);
+                    $this->log("  放 末影箱(黑曜石承载) @ {$tx},{$ty},{$tz}");
                 } elseif ($blockId === 176) {
                     // 旗帜：站立式 meta 是按 yaw 的朝向（0~15），挂墙的用点击面
                     if ($face >= 2) {
@@ -1780,6 +1786,13 @@ final class Server
                 $this->removeFurnace($x, $y, $z);
                 $this->log("  熔炉被打掉，内容物已掉落 ({$fk})");
             }
+        }
+
+        if ($id === 49 && $this->isEnderChest($x, $y, $z)) {
+            $this->unmarkEnderChest($x, $y, $z);
+            $this->spawnDrop($x, $y, $z, 130, 1, 0, $c);
+
+            return;
         }
 
         if ($id === 176 || $id === 177) {
