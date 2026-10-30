@@ -1758,10 +1758,14 @@ final class Server
         }
 
         if ($id === 176 || $id === 177) {
-            // 旗帜掉落要带颜色（damage = 颜色），走通用掉落会变成白色
+            // 旗帜掉落要带颜色（damage = 颜色），走通用掉落会变成白色。
+            // 必须 return —— 否则下面那段通用掉落还会再掉一次 176/177 方块，
+            // 而 176/177 没有物品形态，玩家捡起来客户端就崩（item=null 的 ItemStack）。
             $bcol = $this->banners[$x . ',' . $y . ',' . $z] ?? 0;
             $this->removeBanner($x, $y, $z);
             $this->spawnDrop($x, $y, $z, 425, 1, (int) $bcol, $c);
+
+            return;
         }
 
         if ($id === 26) {
