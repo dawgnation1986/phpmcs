@@ -1106,6 +1106,17 @@ final class Server
                     $this->changeBlock($tx, $ty, $tz, 61, $furnaceMeta);
                     $this->ensureFurnace($tx, $ty, $tz);
                     $blockId = 61;
+                } elseif ($blockId === 65 || $blockId === 68) {
+                    // 梯子 / 墙上的告示牌：meta 表示「贴在哪一面墙」，必须是 2~5。
+                    // 写 0 客户端画不出来 —— 这就是「梯子 reload 后消失」的真相：
+                    // 方块一直在，只是没有方向、渲染不出来。
+                    $faceMeta = ($face >= 2 && $face <= 5) ? $face : 2;
+                    $this->changeBlock($tx, $ty, $tz, $blockId, $faceMeta);
+                    $blockId = $blockId;
+                } elseif ($blockId === 63) {
+                    // 站立的告示牌：meta 是按 yaw 算的朝向（0~15）
+                    $signMeta = ((int) floor(($c->yaw + 180.0) * 16.0 / 360.0 + 0.5)) & 15;
+                    $this->changeBlock($tx, $ty, $tz, 63, $signMeta);
                 } elseif ($blockId === 54 || $blockId === 146) {
                     // 箱子(54) / 陷阱箱(146)：真正的方块，朝向按玩家 yaw 算
                     // （原版 BlockChest 的算法 0→北2 1→东5 2→南3 3→西4）
