@@ -109,6 +109,19 @@ trait EnderChestTrait
         }
         $c->send(self::C_WINDOW_ITEMS, $w);
 
-        $this->log("  {$c->username} 打开末影箱");
+        // 兜底：整窗覆盖之外，再逐格发一次 Set Slot。
+        // 有些客户端对 WINDOW_ITEMS 的处理不稳（普通箱子能用但末影箱不显示），
+        // 单格下发是最不容易被忽略的形式。
+        foreach ($slots as $i => $it) {
+            if ($it === null) {
+                continue;
+            }
+            $c->send(self::C_SET_SLOT, (new Writer())
+                ->byte(1)
+                ->short($i)
+                ->raw($this->slotBytes($it)));
+        }
+
+        $this->log("  {$c->username} 打开末影箱（" . count(array_filter($slots, 'is_array')) . " 格有物品）");
     }
 }
