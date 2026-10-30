@@ -744,11 +744,20 @@ final class Server
      */
     private function nudgeEnderChestRender(Connection $c, int $x, int $y, int $z): void
     {
-        foreach ([5, 0] as $meta) {
+        // meta 是朝向（2~5），不能乱填 0 —— 那会让重进后的朝向错乱。
+        // 取真实 meta，先用一个「合法的另一个朝向」触发重绘，最后还原。
+        $st = $this->world->chunk($x >> 4, $z >> 4)->blockState($x & 15, $y, $z & 15);
+        $real = $st & 15;
+        if ($real < 2 || $real > 5) {
+            $real = 2;
+        }
+        $alt = ($real === 2) ? 3 : 2;
+
+        foreach ([$alt, $real] as $i => $meta) {
             $c->send(self::C_BLOCK_CHANGE, (new Writer())
                 ->raw($this->packPositionBytes($x, $y, $z))
                 ->varInt((130 << 4) | $meta));
-            if ($meta === 5) {
+            if ($i === 0) {
                 $this->sendEnderChestTE($c, $x, $y, $z);
             }
         }
