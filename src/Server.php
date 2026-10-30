@@ -50,6 +50,9 @@ final class Connection
 
     /** 正在睡的床坐标 [x,y,z] */
     public ?array $sleepBed = null;
+
+    /** 待重发的区块 [时刻, cx, cz]（末影箱重进不显示时用） */
+    public array $reChunks = [];
     /** @var array<int,array{id:int,count:int,damage:int}|null> 玩家 2x2 合成格 */
     public array $craftGrid = [null, null, null, null];
     /** @var array<int,array{id:int,count:int,damage:int}|null> 工作台 3x3 合成格 */
@@ -640,7 +643,14 @@ final class Server
             $c->chestSections[$cx . ',' . $cz . ',' . $sy] = [$cx, $cz, $sy];
         }
 
-        // 末影箱（130）：区块数据里有，但客户端重进后经常不画出来。
+        // 末影箱（130）：区块数据里明明有，客户端重进后却经常不画。
+        // 除了下面补一条方块变更，再排一次 2 秒后的整区块重发
+        // —— 这是当初修「箱子不显示」时验证有效的办法。
+        if ($chunk->blockPositions(130) !== []) {
+            $c->reChunks[] = [microtime(true) + 2.0, $cx, $cz];
+        }
+
+
         // 逐个补一条方块变更，强制它重建这几个渲染位置。
         foreach ($chunk->blockPositions(130) as [$ecx, $ecy, $ecz]) {
             $c->send(self::C_BLOCK_CHANGE, (new Writer())
@@ -3993,6 +4003,22 @@ final class Server
                         ->float($pyaw5)->byte($pd5));
                 }
             }
+        }
+
+        // 排队的区块重发（末影箱不显示时用）
+        foreach ($this->players() as $rc) {
+            if ($rc->reChunks === []) {
+                continue;
+            }
+            foreach ($rc->reChunks as $ri => [$rt, $rcx, $rcz]) {
+                if ($now < $rt) {
+                    continue;
+                }
+                unset($rc->reChunks[$ri]);
+                $this->sendChunkTo($rc, $rcx, $rcz);
+                $this->log("  重发区块 {$rcx},{$rcz} -> {$rc->username}");
+            }
+            $rc->reChunks = array_values($rc->reChunks);
         }
 
         // 把临时抹掉的床恢复回去
