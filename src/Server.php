@@ -204,6 +204,9 @@ final class Server
 
     /** @var array 待恢复的床 [时刻, x, y, z, 真实 state] */
     private array $pendingBedRestore = [];
+
+    /** @var array 我们生成的实体 eid => [type,x,y,z]（展示框/盔甲架/画） */
+    private array $spawnedEntities = [];
     /** @var array<int, array{id:int,count:int,meta:int,x:float,y:float,z:float,at:float,expire:float}> */
     private array $drops = [];
     /** @var array<string, array{0:int,1:int,2:int}> 改了方块的 section，要重发给客户端 */
@@ -748,6 +751,7 @@ final class Server
             }
             $p->send(self::C_SPAWN_OBJECT, $w);
         }
+        $this->spawnedEntities[$eid] = ['type' => $type, 'x' => $px, 'y' => $py, 'z' => $pz];
         $this->log(sprintf('  生成实体 type=%d eid=%d @ %.1f,%.1f,%.1f data=%d', $type, $eid, $px, $py, $pz, $data));
     }
 
@@ -1163,7 +1167,9 @@ final class Server
 
                 // 展示框(389)：Spawn Object type=71，data 是朝向
                 if ($itemId === 389) {
-                    $d = ($face >= 2 && $face <= 5) ? ($face - 2) : 0;   // 2->0 南 3->1 西 4->2 北 5->3 东
+                    // 1.8 的方向索引是「水平编号」：南0 西1 北2 东3
+                    $faceMap = [2 => 2, 3 => 0, 4 => 1, 5 => 3];
+                    $d = $faceMap[$face] ?? 0;
                     $off2 = [[0, 0, 1], [-1, 0, 0], [0, 0, -1], [1, 0, 0]][$d];
                     $px4 = $x + 0.5 + $off2[0] * 0.5;
                     $py4 = $y + 0.5;
@@ -1386,6 +1392,26 @@ final class Server
                 $targetEid = $r->readVarInt();
                 $action = $r->readByte();
                 if ($action === 1) {          // 1 = 攻击
+                    // 打我们自己生成的实体（展示框/盔甲架）：销毁 + 掉落
+                    if (isset($this->spawnedEntities[$targetEid])) {
+                        $ent = $this->spawnedEntities[$targetEid];
+                        unset($this->spawnedEntities[$targetEid]);
+                        foreach ($this->players() as $pp) {
+                            $pp->send(self::C_DESTROY_ENTITIES, (new Writer())
+                                ->varInt(1)->varInt($targetEid));
+                        }
+                        $dropId = match ($ent['type']) {
+                            71 => 389,   // 展示框
+                            30 => 416,   // 盔甲架
+                            default => 0,
+                        };
+                        if ($dropId > 0) {
+                            $this->spawnDrop((int) floor($ent['x']), (int) floor($ent['y']),
+                                (int) floor($ent['z']), $dropId, 1, 0, $c);
+                        }
+                        $this->log("  打掉实体 type={$ent['type']} eid={$targetEid}");
+                        break;
+                    }
                     // 先看是不是打到了生物
                     if ($this->damageMob($targetEid, 1, $c)) {
                         $this->addExhaustion($c, 0.3);
