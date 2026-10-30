@@ -640,12 +640,11 @@ final class Server
             $c->chestSections[$cx . ',' . $cz . ',' . $sy] = [$cx, $cz, $sy];
         }
 
-        // 末影箱（130）：区块数据里有，但客户端重进后经常不画出来。
-        // 逐个补一条方块变更，强制它重建这几个渲染位置。
+        // 末影箱（130）：区块数据里有（/block 确认过是 130），客户端却不画。
+        // 和箱子是同一个原因 —— 渲染要等 TileEntityEnderChest 建出来，
+        // 所以这里补发 0x35 让它就地建 TE。（方块变更那招试过，没用）
         foreach ($chunk->blockPositions(130) as [$ecx, $ecy, $ecz]) {
-            $c->send(self::C_BLOCK_CHANGE, (new Writer())
-                ->raw($this->packPositionBytes($ecx, $ecy, $ecz))
-                ->varInt(130 << 4));
+            $this->sendEnderChestTE($c, $ecx, $ecy, $ecz);
         }
 
         // 告示牌：0x33 Update Sign，同样随区块补发
@@ -697,6 +696,24 @@ final class Server
         // action 只是给少数实体做特殊处理（1 刷怪箱 / 2 命令方块 / 3 告示牌 /
         // 4 头颅 / 5 / 6），箱子没有特殊分支，填 0 即可。客户端会先按方块
         // 建出 TileEntityChest，再走这里。
+        $c->send(self::C_UPDATE_TILE_ENTITY, (new Writer())
+            ->raw($this->packPositionBytes($x, $y, $z))
+            ->byte(0)
+            ->raw($nbt));
+    }
+
+    /**
+     * 末影箱的 0x35。和箱子同理：客户端的渲染要等 TileEntityEnderChest 建出来，
+     * 而它只在「查这个位置的 TE」时按方块创建 —— 所以必须发一次这个包。
+     */
+    private function sendEnderChestTE(Connection $c, int $x, int $y, int $z): void
+    {
+        $nbt = Nbt::write(Tag::compound([
+            'id' => Tag::str('EnderChest'),
+            'x' => Tag::int($x),
+            'y' => Tag::int($y),
+            'z' => Tag::int($z),
+        ]));
         $c->send(self::C_UPDATE_TILE_ENTITY, (new Writer())
             ->raw($this->packPositionBytes($x, $y, $z))
             ->byte(0)
