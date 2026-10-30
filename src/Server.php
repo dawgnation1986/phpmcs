@@ -625,7 +625,9 @@ final class Server
             // 下一轮就能把 TE 建出来；建好后多余的轮次是无害的空转。
             $c->chestSectionTimes = [];
             for ($i = 0; $i < 15; $i++) {
-                $c->chestSectionTimes[] = $now + 0.4 + 1.5 * $i;
+                // 前 5 秒内密集补发：客户端加载区块有先后，早发的 0x35 会被丢掉，
+                // 原来 1.5 秒一轮要拖到 20 秒，箱子看着像「半天不出来」。
+                $c->chestSectionTimes[] = $now + 0.2 + 0.35 * $i;
             }
         }
     }
