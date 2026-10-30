@@ -159,6 +159,8 @@ final class Server
     private const C_SPAWN_PLAYER = 0x0C;
     private const C_DESTROY_ENTITIES = 0x13;
     private const C_SPAWN_MOB = 0x0F;
+    /** S->C Spawn Painting：eid + 标题 + 坐标 + 朝向 */
+    private const C_SPAWN_PAINTING = 0x10;
     private const C_TIME_UPDATE = 0x03;
     private const C_ENTITY_STATUS = 0x1A;
     private const C_ENTITY_LOOK = 0x16;
@@ -1122,6 +1124,32 @@ final class Server
                 }
                 // 1.8 有一部分物品 id 和方块 id 不是同一个数（甘蔗、种子、作物…），
                 // 直接拿物品 id 当方块 id 会让服务端拒绝放置。
+                // 画(321)：走 0x10 Spawn Painting，不是 Spawn Object。
+                // 只放 1x1 的画（kebab/aztec 这些），位置就是点击的那一格，
+                // 不用算多格尺寸的角点偏移 —— 大的等以后再做。
+                if ($itemId === 321) {
+                    $pd = ($face >= 2 && $face <= 5) ? ($face - 2) : 0;
+                    $titles = ['kebab', 'aztec', 'alban', 'aztec2', 'bomb', 'plant', 'wasteland'];
+                    $title = $titles[random_int(0, count($titles) - 1)];
+                    $peid = $this->nextEntityId++;
+                    foreach ($this->players() as $pp2) {
+                        $pp2->send(self::C_SPAWN_PAINTING, (new Writer())
+                            ->varInt($peid)
+                            ->string($title)
+                            ->raw($this->packPositionBytes($x, $y, $z))
+                            ->byte($pd));
+                    }
+                    $this->log("  {$c->username} 放画 {$title} @ {$x},{$y},{$z} 朝向 {$pd}");
+                    $slot6 = 36 + $c->heldSlot;
+                    if (isset($c->inventory[$slot6])) {
+                        if (--$c->inventory[$slot6]['count'] <= 0) {
+                            unset($c->inventory[$slot6]);
+                        }
+                        $this->sendPlayerInventory($c);
+                    }
+                    break;
+                }
+
                 // 展示框(389)：Spawn Object type=71，data 是朝向
                 if ($itemId === 389) {
                     $d = ($face >= 2 && $face <= 5) ? ($face - 2) : 0;   // 2->0 南 3->1 西 4->2 北 5->3 东
