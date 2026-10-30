@@ -51,6 +51,9 @@ final class Connection
     /** 正在睡的床坐标 [x,y,z] */
     public ?array $sleepBed = null;
 
+    /** 正在打开的酿造台 ['x','y','z','cursor'] */
+    public ?array $brewing = null;
+
     /** 末影箱重试 [时刻, x, y, z] */
     public array $enderRetries = [];
     /** @var array<int,array{id:int,count:int,damage:int}|null> 玩家 2x2 合成格 */
@@ -144,6 +147,7 @@ final class Server
     use FurnaceTrait;
     use SpawnerTrait;
     use BannerTrait;
+    use BrewingTrait;
     use FluidTrait;
     use RedstoneTrait;
 
@@ -1105,6 +1109,11 @@ final class Server
                 }
                 // 床：晚上右键直接睡到天亮（不模拟躺下动画，最省事也最稳）
                 // 末影箱：每个玩家一份 27 格，跨箱子共享
+                if ($hitId === 117) {
+                    $this->openBrewingStand($c, $x, $y, $z);
+                    break;
+                }
+
                 if ($hitId === 130) {
                     $this->openEnderChest($c);
                     break;
@@ -1576,6 +1585,8 @@ final class Server
                     }
                 } elseif ($windowId === 0) {
                     $this->clickInventory($c, $slot, $button, $mode, $cursor);
+                } elseif ($c->brewing !== null && $windowId === 5) {
+                    $this->clickBrewing($c, $slot, $button, $mode, $cursor);
                 } elseif ($c->furnace !== null && ($windowId === 1 || $windowId === 2 || $windowId === 3)) {
                     $this->clickFurnace($c, $slot, $button, $mode, $cursor);
                 } elseif ($windowId === 1) {
@@ -2136,6 +2147,7 @@ final class Server
         430 => 196,  // 金合欢门
         431 => 197,  // 深色橡木门
         355 => 26,   // 床
+        379 => 117,  // 酿造台
         397 => 144,  // 头颅（生物头颅/玩家头颅都是 144）
         425 => 176,  // 旗帜（站立式 176，挂墙的 177 不单独发物品）
         295 => 59,   // 小麦种子 -> 作物
@@ -4005,6 +4017,7 @@ final class Server
         $this->processDrops();
         $this->tickFluids($now);
         $this->tickFurnaces($now);
+        $this->tickBrewing($now);
         $this->tickMobs($now);
         $this->tickSpawners($now);
 

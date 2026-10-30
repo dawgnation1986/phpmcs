@@ -36,6 +36,7 @@ require __DIR__ . '/../src/MobTrait.php';
 require __DIR__ . '/../src/FurnaceTrait.php';
 require __DIR__ . '/../src/SpawnerTrait.php';
 require __DIR__ . '/../src/BannerTrait.php';
+require __DIR__ . '/../src/BrewingTrait.php';
 require __DIR__ . '/../src/FluidTrait.php';
 require __DIR__ . '/../src/RedstoneTrait.php';
 require __DIR__ . '/../src/CraftingTrait.php';
