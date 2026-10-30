@@ -50,6 +50,9 @@ final class Connection
 
     /** 正在睡的床坐标 [x,y,z] */
     public ?array $sleepBed = null;
+
+    /** 末影箱重试 [时刻, x, y, z] */
+    public array $enderRetries = [];
     /** @var array<int,array{id:int,count:int,damage:int}|null> 玩家 2x2 合成格 */
     public array $craftGrid = [null, null, null, null];
     /** @var array<int,array{id:int,count:int,damage:int}|null> 工作台 3x3 合成格 */
@@ -640,11 +643,20 @@ final class Server
             $c->chestSections[$cx . ',' . $cz . ',' . $sy] = [$cx, $cz, $sy];
         }
 
-        // 末影箱（130）：区块数据里有（/block 确认过是 130），客户端却不画。
-        // 和箱子是同一个原因 —— 渲染要等 TileEntityEnderChest 建出来，
-        // 所以这里补发 0x35 让它就地建 TE。（方块变更那招试过，没用）
+        // 末影箱（130）：客户端是 ENTITYBLOCK_ANIMATED，靠 TE 渲染。
+        // 顺序必须是「先建 TE，再触发重绘」：
+        //   0x35 -> chunk.getTileEntity(pos, CREATE) 造出 TileEntityEnderChest
+        //   0x23 -> WorldClient.setBlockState(pos, state, 3) 会 markBlockRangeForRenderUpdate
+        //          （状态没变时方块不动，但重绘照样触发）
+        // 只发一次常赶在区块加载完成之前，所以排队重试。
         foreach ($chunk->blockPositions(130) as [$ecx, $ecy, $ecz]) {
             $this->sendEnderChestTE($c, $ecx, $ecy, $ecz);
+            $c->send(self::C_BLOCK_CHANGE, (new Writer())
+                ->raw($this->packPositionBytes($ecx, $ecy, $ecz))
+                ->varInt(130 << 4));
+            foreach ([0.6, 1.6, 3.0, 5.0] as $delay) {
+                $c->enderRetries[] = [microtime(true) + $delay, $ecx, $ecy, $ecz];
+            }
         }
 
         // 告示牌：0x33 Update Sign，同样随区块补发
@@ -1062,8 +1074,7 @@ final class Server
                 }
                 // 床：晚上右键直接睡到天亮（不模拟躺下动画，最省事也最稳）
                 // 末影箱：每个玩家一份 27 格，跨箱子共享
-                // 末影箱在世界数据里存成黑曜石(49)，用坐标表区分
-                if ($hitId === 49 && $this->isEnderChest($x, $y, $z)) {
+                if ($hitId === 130) {
                     $this->openEnderChest($c);
                     break;
                 }
@@ -1310,11 +1321,6 @@ final class Server
                     $this->changeBlock($tx, $ty, $tz, 61, $furnaceMeta);
                     $this->ensureFurnace($tx, $ty, $tz);
                     $blockId = 61;
-                } elseif ($blockId === 130) {
-                    // 1.8 客户端不渲染 TE 方块（130），所以存成黑曜石(49) + 坐标表
-                    $this->changeBlock($tx, $ty, $tz, 49, 0);
-                    $this->markEnderChest($tx, $ty, $tz);
-                    $this->log("  放 末影箱(黑曜石承载) @ {$tx},{$ty},{$tz}");
                 } elseif ($blockId === 176) {
                     // 旗帜：站立式 meta 是按 yaw 的朝向（0~15），挂墙的用点击面
                     if ($face >= 2) {
@@ -1786,13 +1792,6 @@ final class Server
                 $this->removeFurnace($x, $y, $z);
                 $this->log("  熔炉被打掉，内容物已掉落 ({$fk})");
             }
-        }
-
-        if ($id === 49 && $this->isEnderChest($x, $y, $z)) {
-            $this->unmarkEnderChest($x, $y, $z);
-            $this->spawnDrop($x, $y, $z, 130, 1, 0, $c);
-
-            return;
         }
 
         if ($id === 176 || $id === 177) {
@@ -4023,6 +4022,24 @@ final class Server
                         ->float($pyaw5)->byte($pd5));
                 }
             }
+        }
+
+        // 末影箱重试：再发一次 0x35 + 同状态 0x23
+        foreach ($this->players() as $ec) {
+            if ($ec->enderRetries === []) {
+                continue;
+            }
+            foreach ($ec->enderRetries as $ei => [$et, $ex, $ey, $ez]) {
+                if ($now < $et) {
+                    continue;
+                }
+                unset($ec->enderRetries[$ei]);
+                $this->sendEnderChestTE($ec, $ex, $ey, $ez);
+                $ec->send(self::C_BLOCK_CHANGE, (new Writer())
+                    ->raw($this->packPositionBytes($ex, $ey, $ez))
+                    ->varInt(130 << 4));
+            }
+            $ec->enderRetries = array_values($ec->enderRetries);
         }
 
         // 把临时抹掉的床恢复回去
