@@ -1004,7 +1004,8 @@ final class Server
                     break;
                 }
 
-                if ($hitId === 61 || $hitId === 133) {
+                // 62 = 点亮的熔炉：燃烧时方块 id 会变成 62，右键也得认
+                if ($hitId === 61 || $hitId === 62 || $hitId === 133) {
                     if ($this->hasFurnace($x, $y, $z)) {
                         $this->openFurnace($c, $x, $y, $z);
                         $this->log("  打开熔炉 {$x},{$y},{$z}");
@@ -1527,6 +1528,23 @@ final class Server
         $meta = $state & 0x0F;
         if ($id === 7) {
             return; // 基岩挖不动
+        }
+
+        if ($id === 61 || $id === 62) {
+            // 打掉熔炉：输入/燃料/产出都要掉出来，不能留在数据格子里
+            $fk = $x . ',' . $y . ',' . $z;
+            $rec = $this->furnaces[$fk] ?? null;
+            if ($rec !== null) {
+                foreach (['in', 'fuel', 'out'] as $slotKey) {
+                    $it = $rec[$slotKey] ?? null;
+                    if (is_array($it) && isset($it['id']) && (int) ($it['count'] ?? 0) > 0) {
+                        $this->spawnDrop($x, $y, $z, (int) $it['id'], (int) $it['count'],
+                            (int) ($it['damage'] ?? 0), $c);
+                    }
+                }
+                $this->removeFurnace($x, $y, $z);
+                $this->log("  熔炉被打掉，内容物已掉落 ({$fk})");
+            }
         }
 
         if ($id === 26) {
