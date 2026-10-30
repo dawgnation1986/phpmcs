@@ -247,7 +247,12 @@ trait FurnaceTrait
         }
         $k = $this->furnaceKey($c->furnace['x'], $c->furnace['y'], $c->furnace['z']);
         if (!isset($this->furnaces[$k])) {
-            return;
+            // 记录没了一眼：与其静默丢掉这次点击（表现为「物品放进去了但不烧」），
+            // 不如当场补一条，让它至少能正常工作
+            $this->ensureFurnace($c->furnace['x'], $c->furnace['y'], $c->furnace['z']);
+            if (!isset($this->furnaces[$k])) {
+                return;
+            }
         }
         if ($slot < 0 || $slot > 38) {
             return;

@@ -2502,6 +2502,23 @@ final class Server
                     'color' => 'green'], 1);
                 break;
 
+            case 'furnace':
+                // 自检：看服务端这边这台熔炉到底存了什么
+                $fx2 = (int) floor($c->x);
+                $fy2 = (int) floor($c->y) - 1;
+                $fz2 = (int) floor($c->z);
+                $fk2 = $fx2 . ',' . $fy2 . ',' . $fz2;
+                $rec = $this->furnaces[$fk2] ?? null;
+                if ($rec === null) {
+                    $this->sendChat($c, ['text' => "脚下方块 {$fk2} 没有熔炉记录", 'color' => 'red'], 1);
+                    break;
+                }
+                $fmt = function ($it) { return $it === null ? '空' : ($it['id'] . 'x' . $it['count']); };
+                $this->sendChat($c, ['text' => sprintf('熔炉 %s：输入 %s ｜ 燃料 %s ｜ 产出 %s ｜ 余火 %d ｜ 进度 %d/200',
+                    $fk2, $fmt($rec['in']), $fmt($rec['fuel']), $fmt($rec['out']),
+                    (int) $rec['burn'], (int) $rec['cook']), 'color' => 'aqua'], 1);
+                break;
+
             case 'findvillage':
             case 'village':
                 $pcx2 = (int) floor($c->x) >> 4;
