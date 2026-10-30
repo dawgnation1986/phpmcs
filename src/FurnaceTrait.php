@@ -368,5 +368,28 @@ trait FurnaceTrait
                 }
             }
         }
+    
+        // 同步打开着熔炉界面的玩家：0=余火 1=已烧时长 2=总时长
+        foreach ($this->furnaces as $fk => $ff) {
+            $parts = explode(',', (string) $fk);
+            if (count($parts) !== 3) {
+                continue;
+            }
+            [$fx, $fy, $fz] = [(int) $parts[0], (int) $parts[1], (int) $parts[2]];
+            foreach ($this->conns as $fp) {
+                if ($fp->closed || $fp->furnace === null) {
+                    continue;
+                }
+                if ((int) $fp->furnace['x'] !== $fx || (int) $fp->furnace['y'] !== $fy
+                    || (int) $fp->furnace['z'] !== $fz) {
+                    continue;
+                }
+                foreach ([[0, min(200, (int) ($ff['burn'] ?? 0))],
+                          [1, min(200, (int) ($ff['cook'] ?? 0))], [2, 200]] as [$prop, $val]) {
+                    $fp->send(self::C_WINDOW_PROPERTY, (new Writer())
+                        ->byte(1)->short($prop)->short($val));
+                }
+            }
+        }
     }
 }

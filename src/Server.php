@@ -161,6 +161,8 @@ final class Server
     private const C_HEAD_LOOK = 0x19;
     private const C_CHUNK_DATA = 0x21;
     /** 1.8 的瓦片实体包：箱子这类方块没有它客户端就不画 */
+    /** 窗口进度条：熔炉的余火/烧炼进度靠它同步 */
+    private const C_WINDOW_PROPERTY = 0x31;
     private const C_UPDATE_SIGN = 0x33;   // S->C Update Sign
     private const C_UPDATE_TILE_ENTITY = 0x35;
     // 1.8：0x0B 是 Animation（挥手），0x0D 才是 Collect Item。
@@ -928,6 +930,19 @@ final class Server
                     break;
                 }
                 // 床：晚上右键直接睡到天亮（不模拟躺下动画，最省事也最稳）
+                // 告示牌：右键要让客户端打开编辑界面。
+                // 1.8 里 S33 既是「显示文字」也是「打开编辑器」——
+                // 客户端收到且距离 <8 格就会弹出输入框。
+                if ($hitId === 63 || $hitId === 68) {
+                    foreach ($this->world->signsInChunk($x >> 4, $z >> 4) as [$sgx, $sgy, $sgz, $slines]) {
+                        if ($sgx === $x && $sgy === $y && $sgz === $z) {
+                            $this->sendSign($c, $sgx, $sgy, $sgz, $slines);
+                            break;
+                        }
+                    }
+                    break;
+                }
+
                 if ($hitId === 26) {
                     if ($this->isNight()) {
                         // 先让客户端躺下（S0A Use Bed），3 秒后再叫他起来，
