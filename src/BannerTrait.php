@@ -3,6 +3,9 @@ declare(strict_types=1);
 
 namespace PhpMc;
 
+use PhpMc\Nbt\Nbt;
+use PhpMc\Nbt\Tag;
+
 /**
  * 旗帜（方块 176 站立 / 177 挂墙）。
  *
