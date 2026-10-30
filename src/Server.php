@@ -650,10 +650,7 @@ final class Server
         //          （状态没变时方块不动，但重绘照样触发）
         // 只发一次常赶在区块加载完成之前，所以排队重试。
         foreach ($chunk->blockPositions(130) as [$ecx, $ecy, $ecz]) {
-            $this->sendEnderChestTE($c, $ecx, $ecy, $ecz);
-            $c->send(self::C_BLOCK_CHANGE, (new Writer())
-                ->raw($this->packPositionBytes($ecx, $ecy, $ecz))
-                ->varInt(130 << 4));
+            $this->nudgeEnderChestRender($c, $ecx, $ecy, $ecz);
             foreach ([0.6, 1.6, 3.0, 5.0] as $delay) {
                 $c->enderRetries[] = [microtime(true) + $delay, $ecx, $ecy, $ecz];
             }
@@ -730,6 +727,31 @@ final class Server
             ->raw($this->packPositionBytes($x, $y, $z))
             ->byte(0)
             ->raw($nbt));
+    }
+
+    /**
+     * 让客户端把末影箱画出来。
+     *
+     * 客户端 World.setBlockState 的第一道判断是：
+     *     alz s = chunk.setBlockState(pos, state);
+     *     if (s == null) return false;      // 状态没变就到此为止
+     * 也就是说「发一条同状态的方块变更」根本不会触发重绘 ——
+     * 这就是之前怎么补发都没用的原因。
+     *
+     * 所以这里发一条**改了 meta 的** 130（state 对象不同 → 会走到重绘分支，
+     * 而方块仍是末影箱 → TileEntity 的 shouldRefresh 不成立，TE 不会被删），
+     * 再补 0x35 让客户端建出 TE，最后把 meta 改回去再触发一次重绘。
+     */
+    private function nudgeEnderChestRender(Connection $c, int $x, int $y, int $z): void
+    {
+        foreach ([5, 0] as $meta) {
+            $c->send(self::C_BLOCK_CHANGE, (new Writer())
+                ->raw($this->packPositionBytes($x, $y, $z))
+                ->varInt((130 << 4) | $meta));
+            if ($meta === 5) {
+                $this->sendEnderChestTE($c, $x, $y, $z);
+            }
+        }
     }
 
     /** 给所有在线玩家发一次某格的 TE（放箱子/箱子变化后用） */
@@ -4034,10 +4056,7 @@ final class Server
                     continue;
                 }
                 unset($ec->enderRetries[$ei]);
-                $this->sendEnderChestTE($ec, $ex, $ey, $ez);
-                $ec->send(self::C_BLOCK_CHANGE, (new Writer())
-                    ->raw($this->packPositionBytes($ex, $ey, $ez))
-                    ->varInt(130 << 4));
+                $this->nudgeEnderChestRender($ec, $ex, $ey, $ez);
             }
             $ec->enderRetries = array_values($ec->enderRetries);
         }
