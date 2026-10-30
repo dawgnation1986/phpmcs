@@ -47,6 +47,9 @@ final class Connection
     public bool $chestHinted = false;
     /** 当前打开的熔炉坐标 */
     public ?array $furnace = null;
+
+    /** 正在睡的床坐标 [x,y,z] */
+    public ?array $sleepBed = null;
     /** @var array<int,array{id:int,count:int,damage:int}|null> 玩家 2x2 合成格 */
     public array $craftGrid = [null, null, null, null];
     /** @var array<int,array{id:int,count:int,damage:int}|null> 工作台 3x3 合成格 */
@@ -195,6 +198,9 @@ final class Server
 
     /** @var array<int,float> entityId => 该醒来的时间戳（睡觉用） */
     private array $sleeping = [];
+
+    /** @var array 待恢复的床 [时刻, x, y, z, 真实 state] */
+    private array $pendingBedRestore = [];
     /** @var array<int, array{id:int,count:int,meta:int,x:float,y:float,z:float,at:float,expire:float}> */
     private array $drops = [];
     /** @var array<string, array{0:int,1:int,2:int}> 改了方块的 section，要重发给客户端 */
@@ -978,10 +984,12 @@ final class Server
 
                 if ($hitId === 26) {
                     if ($this->isNight()) {
-                        // 不再发 S0A：1.8 客户端进躺姿后，服务端没法可靠地
-                        // 把它叫起来（点「起床」会卡住）。改成只等 3 秒，
-                        // 保留「躺一会儿」的节奏但不进入床 GUI。
+                        // 真躺下：S0A Use Bed
+                        $c->send(self::C_USE_BED, (new Writer())
+                            ->varInt($c->entityId)
+                            ->raw($this->packPositionBytes($x, $y, $z)));
                         $this->sleeping[$c->entityId] = microtime(true) + 3.0;
+                        $c->sleepBed = [$x, $y, $z];
                         $this->sendChat($c, ['text' => '你躺下了……', 'color' => 'gray'], 1);
                         $this->log('  ' . $c->username . ' 躺下 @ ' . $x . ',' . $y . ',' . $z);
                     } else {
@@ -3694,6 +3702,21 @@ final class Server
         $this->tickMobs($now);
         $this->tickSpawners($now);
 
+        // 把临时抹掉的床恢复回去
+        if ($this->pendingBedRestore !== []) {
+            foreach ($this->pendingBedRestore as $i5 => $rb) {
+                if ($now < $rb[0]) {
+                    continue;
+                }
+                unset($this->pendingBedRestore[$i5]);
+                foreach ($this->players() as $rp) {
+                    $rp->send(self::C_BLOCK_CHANGE, (new Writer())
+                        ->raw($this->packPositionBytes($rb[1], $rb[2], $rb[3]))
+                        ->varInt($rb[4]));
+                }
+            }
+        }
+
         // 睡觉：到点了就叫起来并跳到天亮
         if ($this->sleeping !== []) {
             foreach ($this->sleeping as $eid => $until) {
@@ -3702,6 +3725,21 @@ final class Server
                 }
                 unset($this->sleeping[$eid]);
                 $this->world->setTimeOfDay(0);
+                // 让客户端自己起床：把床临时发成空气，0.2 秒后再发回真方块。
+                // 1.8 客户端 onLivingUpdate 里会检查床还在不在，不在就 wakeUpPlayer。
+                foreach ($this->conns as $wc) {
+                    if ($wc->closed || $wc->entityId !== $eid || $wc->sleepBed === null) {
+                        continue;
+                    }
+                    [$bx3, $by3, $bz3] = $wc->sleepBed;
+                    $ch3 = $this->world->chunk($bx3 >> 4, $bz3 >> 4);
+                    $real = $ch3->blockState($bx3 & 15, $by3, $bz3 & 15);
+                    $wc->send(self::C_BLOCK_CHANGE, (new Writer())
+                        ->raw($this->packPositionBytes($bx3, $by3, $bz3))
+                        ->varInt(0));
+                    $this->pendingBedRestore[] = [microtime(true) + 0.2, $bx3, $by3, $bz3, $real];
+                    $wc->sleepBed = null;
+                }
                 foreach ($this->conns as $sp2) {
                     if ($sp2->closed || $sp2->entityId !== $eid) {
                         continue;
