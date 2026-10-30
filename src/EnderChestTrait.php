@@ -66,6 +66,7 @@ trait EnderChestTrait
             }
         }
         $this->enderInvs[strtolower($name)] = $clean;
+        $this->log(sprintf('  末影箱落盘 user=%s 有 %d 格 -> %s', $name, count($clean), $this->enderFile()));
         $dir = dirname($this->enderFile());
         if (!is_dir($dir)) {
             @mkdir($dir, 0777, true);
