@@ -54,7 +54,11 @@ final class AnvilWorld
             );
         }
         $this->seed = Nbt::int($this->data(), 'RandomSeed', 0);
+
         $this->generator = new TerrainGenerator($this->seed);
+        // 出生点掉海里就挪到最近的陆地（必须在 generator 建好之后，
+        // 它要查群系；放前面会撞上「属性未初始化」）
+        $this->ensureSpawnOnLand();
         // 旧生成器用 time() 当 LastUpdate，原版存的是游戏刻（通常很小）。
         // 用等级存档的 LastPlayed 做下限，避免把正常原版区块当成旧生成区块。
         $this->migrationCutoff = max(
@@ -115,6 +119,58 @@ final class AnvilWorld
     }
 
     /** @return array{0:int,1:int,2:int} */
+    /** 海洋类群系：出生点不能选这些 */
+    private const WET_BIOMES = [0, 7, 10, 16, 24, 25, 26];
+
+    /**
+     * 保证出生点不在水里。
+     *
+     * 原来 SpawnX/SpawnZ 默认 0,0 —— 0,0 是海的话人一出生就掉水里。
+     * 从原点按圈往外找一个「陆地群系」的区块中心当出生点。
+     * 只在出生点本身是水域时才动，已有存档的陆地出生点不受影响。
+     */
+    private function ensureSpawnOnLand(): void
+    {
+        $sx = Nbt::int($this->data(), 'SpawnX', 0);
+        $sz = Nbt::int($this->data(), 'SpawnZ', 0);
+
+        $biomeAt = function (int $x, int $z): int {
+            $g = $this->generator->biomeGrid($x >> 4, $z >> 4);
+            return $g[($z & 15) * 16 + ($x & 15)] ?? -1;
+        };
+
+        if (!in_array($biomeAt($sx, $sz), self::WET_BIOMES, true)) {
+            return;   // 已经是陆地，不动
+        }
+
+        for ($r = 0; $r <= 16; $r++) {
+            for ($dx = -$r; $dx <= $r; $dx++) {
+                for ($dz = -$r; $dz <= $r; $dz++) {
+                    if (max(abs($dx), abs($dz)) !== $r) {
+                        continue;
+                    }
+                    $cx = ($sx >> 4) + $dx;
+                    $cz = ($sz >> 4) + $dz;
+                    $bx = $cx * 16 + 8;
+                    $bz = $cz * 16 + 8;
+                    if (in_array($biomeAt($bx, $bz), self::WET_BIOMES, true)) {
+                        continue;
+                    }
+                    $d = $this->data();
+                    if ($d !== null) {
+                        $d->value['SpawnX'] = Tag::int($bx);
+                        $d->value['SpawnZ'] = Tag::int($bz);
+                        $d->value['SpawnY'] = Tag::int(64);   // 真正高度 spawnPoint() 会按地形抬
+                        $this->writeLevelDat();
+                        error_log(sprintf('[phpmcs] 出生点在水里，挪到 %d,%d（群系 %d）',
+                            $bx, $bz, $biomeAt($bx, $bz)));
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
     public function spawnPoint(): array
     {
         $x = Nbt::int($this->data(), 'SpawnX', 0);
