@@ -207,6 +207,9 @@ final class Server
 
     /** @var array 我们生成的实体 eid => [type,x,y,z]（展示框/盔甲架/画） */
     private array $spawnedEntities = [];
+
+    /** @var array 画 [x,y,z,title,dir,yaw] */
+    private array $paintings = [];
     /** @var array<int, array{id:int,count:int,meta:int,x:float,y:float,z:float,at:float,expire:float}> */
     private array $drops = [];
     /** @var array<string, array{0:int,1:int,2:int}> 改了方块的 section，要重发给客户端 */
@@ -751,7 +754,7 @@ final class Server
             }
             $p->send(self::C_SPAWN_OBJECT, $w);
         }
-        $this->spawnedEntities[$eid] = ['type' => $type, 'x' => $px, 'y' => $py, 'z' => $pz];
+        $this->spawnedEntities[$eid] = ['type' => $type, 'x' => $px, 'y' => $py, 'z' => $pz, 'data' => $data];
         $this->log(sprintf('  生成实体 type=%d eid=%d @ %.1f,%.1f,%.1f data=%d', $type, $eid, $px, $py, $pz, $data));
     }
 
@@ -1154,6 +1157,7 @@ final class Server
                             ->float((float) $c->yaw)
                             ->byte($pd));
                     }
+                    $this->paintings[] = [$x, $y, $z, $title, $pd, (float) $c->yaw];
                     $this->log("  {$c->username} 放画 {$title} @ {$x},{$y},{$z} 朝向 {$pd}");
                     $slot6 = 36 + $c->heldSlot;
                     if (isset($c->inventory[$slot6])) {
@@ -3848,6 +3852,41 @@ final class Server
         $this->tickFurnaces($now);
         $this->tickMobs($now);
         $this->tickSpawners($now);
+
+        // 实体保活：客户端在区块重载/某些情况下会把实体弄丢，
+        // 服务端只发一次就再也补不回来了（盔甲架/画「放完就消失」就是这个）。
+        // 每 2 秒把附近的实体重发一遍，成本很低。
+        if (!isset($this->lastEntityResend) || $now - $this->lastEntityResend >= 2.0) {
+            $this->lastEntityResend = $now;
+            foreach ($this->players() as $ep) {
+                foreach ($this->spawnedEntities as $eid2 => $ent2) {
+                    if (abs($ent2['x'] - $ep->x) > 48 || abs($ent2['z'] - $ep->z) > 48) {
+                        continue;
+                    }
+                    $w2 = (new Writer())
+                        ->varInt((int) $eid2)
+                        ->byte((int) $ent2['type'])
+                        ->int((int) ($ent2['x'] * 32))
+                        ->int((int) ($ent2['y'] * 32))
+                        ->int((int) ($ent2['z'] * 32))
+                        ->byte(0)->byte(0);
+                    $data2 = (int) ($ent2['data'] ?? 0);
+                    $w2->int($data2);
+                    if ($data2 > 0) {
+                        $w2->short(0)->short(0)->short(0);
+                    }
+                    $ep->send(self::C_SPAWN_OBJECT, $w2);
+                }
+                foreach ($this->paintings as [$px5, $py5, $pz5, $pt5, $pd5, $pyaw5]) {
+                    if (abs($px5 - $ep->x) > 48 || abs($pz5 - $ep->z) > 48) {
+                        continue;
+                    }
+                    $ep->send(self::C_SPAWN_PAINTING, (new Writer())
+                        ->string($pt5)->int($px5)->int($py5)->int($pz5)
+                        ->float($pyaw5)->byte($pd5));
+                }
+            }
+        }
 
         // 把临时抹掉的床恢复回去
         if ($this->pendingBedRestore !== []) {
