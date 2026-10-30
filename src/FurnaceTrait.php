@@ -391,22 +391,24 @@ trait FurnaceTrait
             [$bx, $by, $bz] = [(int) $parts2[0], (int) $parts2[1], (int) $parts2[2]];
             $chunk2 = $this->world->chunk($bx >> 4, $bz >> 4);
             $state = $chunk2->blockState($bx & 15, $by, $bz & 15);
-            if (($state >> 4) !== 61) {
+            $curId = $state >> 4;
+            if ($curId !== 61 && $curId !== 62) {
                 continue;   // 已经不是熔炉了
             }
+            // 1.8 里「点亮的熔炉」是**另一个方块 id**：
+            //   61 = furnace，62 = lit_furnace（见 afh.java:860-861）
+            // 改 meta 的 0x8 位没用 —— 客户端根本不看那一位。
             $meta = $state & 15;
-            $wantLit = ((int) ($f2['burn'] ?? 0)) > 0;
-            $isLit = ($meta & 8) !== 0;
-            if ($wantLit === $isLit) {
+            $wantId = ((int) ($f2['burn'] ?? 0)) > 0 ? 62 : 61;
+            if ($curId === $wantId) {
                 continue;
             }
-            $newMeta = $wantLit ? ($meta | 8) : ($meta & ~8);
-            if ($chunk2->setBlock($bx & 15, $by, $bz & 15, 61, $newMeta)) {
+            if ($chunk2->setBlock($bx & 15, $by, $bz & 15, $wantId, $meta)) {
                 $chunk2->dirty = true;
                 foreach ($this->players() as $pp) {
                     $pp->send(self::C_BLOCK_CHANGE, (new Writer())
                         ->raw($this->packPositionBytes($bx, $by, $bz))
-                        ->varInt((61 << 4) | $newMeta));
+                        ->varInt(($wantId << 4) | $meta));
                 }
             }
         }
