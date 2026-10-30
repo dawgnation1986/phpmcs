@@ -15,8 +15,127 @@ trait CraftingTrait
      *
      * @param array<int,array{id:int,count:int,damage:int}|null> $g 行优先 2x2
      */
+
+    /**
+     * 用反编译得到的完整配方表匹配。
+     * $g 是 3x3 行优先的格子（2x2 的调用方把它摆在左上角）。
+     * 返回 [id, count, damage] 或 null。
+     */
+    private static function matchTable(array $g): ?array
+    {
+        // 收集非空格子
+        $cells = [];
+        for ($i = 0; $i < 9; $i++) {
+            $cells[$i] = $g[$i] ?? null;
+        }
+
+        // 有形状：裁掉空行空列后逐格比
+        [$trim, $h, $w] = self::trimGrid($cells, 3, 3);
+        foreach (RecipeTable::SHAPED as [$out, $pat, $keys]) {
+            $ph = count($pat);
+            $pw = max(array_map('strlen', $pat));
+            if ($ph !== $h || $pw !== $w) {
+                continue;
+            }
+            foreach ([false, true] as $mirror) {
+                $ok = true;
+                for ($r = 0; $r < $ph && $ok; $r++) {
+                    for ($c = 0; $c < $pw; $c++) {
+                        $ch = $pat[$r][$c] ?? ' ';
+                        $cell = $trim[$r * $w + $c] ?? null;
+                        if ($ch === ' ') {
+                            if ($cell !== null) {
+                                $ok = false;
+                                break;
+                            }
+                            continue;
+                        }
+                        if ($cell === null || !isset($keys[$ch])) {
+                            $ok = false;
+                            break;
+                        }
+                        [$id, $meta] = $keys[$ch];
+                        if ((int) $cell['id'] !== $id || ((int) ($cell['damage'] ?? 0)) !== $meta) {
+                            $ok = false;
+                            break;
+                        }
+                    }
+                    if ($ok && $mirror) {
+                        // 镜像：把图案左右翻过来再比一次
+                        $pat[$r] = strrev($pat[$r]);
+                    }
+                }
+                if ($ok) {
+                    return ['id' => $out[0], 'count' => $out[1], 'damage' => $out[2]];
+                }
+            }
+        }
+
+        // 无形状：多重集合比较
+        $mine = [];
+        foreach ($cells as $it) {
+            if ($it !== null) {
+                $mine[] = (int) $it['id'] . ':' . (int) ($it['damage'] ?? 0);
+            }
+        }
+        sort($mine);
+        foreach (RecipeTable::SHAPELESS as [$out, $ins]) {
+            $want = [];
+            foreach ($ins as [$id, $meta]) {
+                $want[] = $id . ':' . $meta;
+            }
+            sort($want);
+            if ($want === $mine) {
+                return ['id' => $out[0], 'count' => $out[1], 'damage' => $out[2]];
+            }
+        }
+
+        return null;
+    }
+
+    /** 裁掉四周空行空列，返回 [格子, 高, 宽] */
+    private static function trimGrid(array $g, int $rows, int $cols): array
+    {
+        $minR = $rows;
+        $maxR = -1;
+        $minC = $cols;
+        $maxC = -1;
+        for ($r = 0; $r < $rows; $r++) {
+            for ($c = 0; $c < $cols; $c++) {
+                if (($g[$r * $cols + $c] ?? null) !== null) {
+                    $minR = min($minR, $r);
+                    $maxR = max($maxR, $r);
+                    $minC = min($minC, $c);
+                    $maxC = max($maxC, $c);
+                }
+            }
+        }
+        if ($maxR < 0) {
+            return [[], 0, 0];
+        }
+        $out = [];
+        for ($r = $minR; $r <= $maxR; $r++) {
+            for ($c = $minC; $c <= $maxC; $c++) {
+                $out[] = $g[$r * $cols + $c] ?? null;
+            }
+        }
+
+        return [$out, $maxR - $minR + 1, $maxC - $minC + 1];
+    }
+
     private static function matchCraft2x2(array $g): ?array
     {
+        // 先查反编译出来的完整配方表（2x2 摆在 3x3 的左上角）
+        $grid9 = [
+            $g[0] ?? null, $g[1] ?? null, null,
+            $g[2] ?? null, $g[3] ?? null, null,
+            null, null, null,
+        ];
+        $hit = self::matchTable($grid9);
+        if ($hit !== null) {
+            return $hit;
+        }
+
         $items = array_values(array_filter($g, static fn ($it) => $it !== null));
 
         // 原木 -> 4 木板
@@ -98,6 +217,12 @@ trait CraftingTrait
      */
     private static function matchCraft3x3(array $g): ?array
     {
+        // 先查反编译出来的完整配方表
+        $hit = self::matchTable($g);
+        if ($hit !== null) {
+            return $hit;
+        }
+
         // 床：一排 3 个羊毛，正下方一排 3 个木板。
         // 允许摆在「第 1~2 行」或「第 2~3 行」——之前只认顶两行，
         // 玩家把羊毛放中间行就匹配不到。
