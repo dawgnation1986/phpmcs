@@ -132,6 +132,7 @@ final class Connection
 final class Server
 {
     use ChestTrait;
+    use EnderChestTrait;
     use CraftingTrait;
     use MobTrait;
     use FurnaceTrait;
@@ -930,6 +931,12 @@ final class Server
                     break;
                 }
                 // 床：晚上右键直接睡到天亮（不模拟躺下动画，最省事也最稳）
+                // 末影箱：每个玩家一份 27 格，跨箱子共享
+                if ($hitId === 130) {
+                    $this->openEnderChest($c);
+                    break;
+                }
+
                 // 告示牌：右键要让客户端打开编辑界面。
                 // 1.8 里 S33 既是「显示文字」也是「打开编辑器」——
                 // 客户端收到且距离 <8 格就会弹出输入框。

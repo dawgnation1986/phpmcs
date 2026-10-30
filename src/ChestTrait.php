@@ -213,6 +213,12 @@ trait ChestTrait
             return;
         }
 
+        // 末影箱：不走世界里的 ChestStore，存到玩家自己的末影背包
+        if (!empty($chest['ender'])) {
+            $this->saveEnderSlots((string) ($chest['owner'] ?? ''), array_slice($slots, 0, 27));
+            return;
+        }
+
         $this->chests->save($chest['x'], $chest['y'], $chest['z'], array_slice($slots, 0, 27));
         $this->world->markChunkDirty($chest['x'], $chest['z']);
     }
