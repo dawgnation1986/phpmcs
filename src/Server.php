@@ -2819,6 +2819,19 @@ final class Server
                     'color' => 'green'], 1);
                 break;
 
+            case 'ender':
+                $esl = $this->enderSlots($c->username);
+                $txt = [];
+                foreach ($esl as $i => $it) {
+                    if (is_array($it)) {
+                        $txt[] = "#{$i}:" . $it['id'] . 'x' . $it['count'] . '/' . ($it['damage'] ?? 0);
+                    }
+                }
+                $this->sendChat($c, ['text' => $txt === []
+                    ? '服务端末影箱是空的（cache/ender.json 里查不到你这个名字）'
+                    : '服务端末影箱：' . implode(' ', $txt), 'color' => 'aqua'], 1);
+                break;
+
             case 'furnace':
                 // 自检：看服务端这边这台熔炉到底存了什么
                 $fx2 = (int) floor($c->x);
