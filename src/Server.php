@@ -2820,7 +2820,8 @@ final class Server
                 break;
 
             case 'ender':
-                $esl = $this->enderSlots($c->username);
+                // 现在数据在玩家自己的 ChestStore 里（cache/ender-<名字>.json）
+                $esl = $this->enderStore($c->username)->load(8, 4, 8);
                 $txt = [];
                 foreach ($esl as $i => $it) {
                     if (is_array($it)) {
