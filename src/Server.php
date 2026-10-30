@@ -160,7 +160,7 @@ final class Server
     private const C_DESTROY_ENTITIES = 0x13;
     private const C_SPAWN_MOB = 0x0F;
     /** S->C Spawn Painting：eid + 标题 + 坐标 + 朝向 */
-    private const C_SPAWN_PAINTING = 0x10;
+    private const C_SPAWN_PAINTING = 0x29;   // gs 在客户端的注册顺序是第 42 个 → 41 = 0x29
     private const C_TIME_UPDATE = 0x03;
     private const C_ENTITY_STATUS = 0x1A;
     private const C_ENTITY_LOOK = 0x16;
