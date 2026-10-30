@@ -990,6 +990,13 @@ final class Server
                             ->raw($this->packPositionBytes($x, $y, $z)));
                         $this->sleeping[$c->entityId] = microtime(true) + 3.0;
                         $c->sleepBed = [$x, $y, $z];
+                        foreach ($this->players() as $op) {
+                            if ($op !== $c) {
+                                $op->send(self::C_USE_BED, (new Writer())
+                                    ->varInt($c->entityId)
+                                    ->raw($this->packPositionBytes($x, $y, $z)));
+                            }
+                        }
                         $this->sendChat($c, ['text' => '你躺下了……', 'color' => 'gray'], 1);
                         $this->log('  ' . $c->username . ' 躺下 @ ' . $x . ',' . $y . ',' . $z);
                     } else {
@@ -3725,37 +3732,13 @@ final class Server
                 }
                 unset($this->sleeping[$eid]);
                 $this->world->setTimeOfDay(0);
-                // 让客户端自己起床：把床临时发成空气，0.2 秒后再发回真方块。
-                // 1.8 客户端 onLivingUpdate 里会检查床还在不在，不在就 wakeUpPlayer。
-                foreach ($this->conns as $wc) {
-                    if ($wc->closed || $wc->entityId !== $eid || $wc->sleepBed === null) {
-                        continue;
-                    }
-                    [$bx3, $by3, $bz3] = $wc->sleepBed;
-                    $ch3 = $this->world->chunk($bx3 >> 4, $bz3 >> 4);
-                    $real = $ch3->blockState($bx3 & 15, $by3, $bz3 & 15);
-                    // 床是两格，客户端记的可能是头也可能是脚 —— 两半都对它发一次空气
-                    $meta3 = $real & 15;
-                    $dir3 = $meta3 & 3;
-                    $off3 = [[0, 1], [-1, 0], [0, -1], [1, 0]][$dir3];
-                    $isHead3 = ($meta3 & 0x8) !== 0;
-                    $pairX = $bx3 + ($isHead3 ? -$off3[0] : $off3[0]);
-                    $pairZ = $bz3 + ($isHead3 ? -$off3[1] : $off3[1]);
-                    $pairReal = $ch3 === null ? 0
-                        : $this->world->chunk($pairX >> 4, $pairZ >> 4)
-                            ->blockState($pairX & 15, $by3, $pairZ & 15);
-                    foreach ([[$bx3, $bz3, $real], [$pairX, $pairZ, $pairReal]] as [$qxx, $qzz, $qstate]) {
-                        $wc->send(self::C_BLOCK_CHANGE, (new Writer())
-                            ->raw($this->packPositionBytes($qxx, $by3, $qzz))
-                            ->varInt(0));
-                        $this->pendingBedRestore[] = [microtime(true) + 0.2, $qxx, $by3, $qzz, $qstate];
-                    }
-                    $wc->sleepBed = null;
-                }
+                // 唤醒：位置包必须让 y 有变化，否则客户端认为没动、继续躺着。
+                // （参考实现就是这么做的：y + 0.1 强制脱离躺卧姿势）
                 foreach ($this->conns as $sp2) {
                     if ($sp2->closed || $sp2->entityId !== $eid) {
                         continue;
                     }
+                    $sp2->y += 0.1;   // 必须有变化，否则客户端不认
                     $sp2->send(self::C_POS_LOOK, (new Writer())
                         ->double($sp2->x)->double($sp2->y)->double($sp2->z)
                         ->float($sp2->yaw)->float($sp2->pitch)->byte(0));
