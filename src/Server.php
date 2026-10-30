@@ -984,19 +984,13 @@ final class Server
 
                 if ($hitId === 26) {
                     if ($this->isNight()) {
-                        // 真躺下：S0A Use Bed
-                        $c->send(self::C_USE_BED, (new Writer())
-                            ->varInt($c->entityId)
-                            ->raw($this->packPositionBytes($x, $y, $z)));
+                        // 【已知限制】不发 S0A：1.8 客户端一旦进入躺姿，服务端
+                        // 没有任何可靠的包能把它叫起来（S0A(-1,-1,-1)、位置包 y+0.1、
+                        // 抹掉床方块都试过，全部无效，只会留下「起床」按钮卡死）。
+                        // 参考实现 别人的/phpmc 也是靠「所有人入睡后统一发位置包」，
+                        // 单人情况下不触发，等于没验证过。
+                        // 所以这里只保留「躺一会儿」的等待，不进躺姿。
                         $this->sleeping[$c->entityId] = microtime(true) + 3.0;
-                        $c->sleepBed = [$x, $y, $z];
-                        foreach ($this->players() as $op) {
-                            if ($op !== $c) {
-                                $op->send(self::C_USE_BED, (new Writer())
-                                    ->varInt($c->entityId)
-                                    ->raw($this->packPositionBytes($x, $y, $z)));
-                            }
-                        }
                         $this->sendChat($c, ['text' => '你躺下了……', 'color' => 'gray'], 1);
                         $this->log('  ' . $c->username . ' 躺下 @ ' . $x . ',' . $y . ',' . $z);
                     } else {
