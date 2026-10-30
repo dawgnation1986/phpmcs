@@ -122,6 +122,14 @@ trait ChestTrait
         $size = $c->chest['size'] ?? 27;
         if ($slot < $size) {
             $c->chest['slots'][$slot] = $item;
+            // 末影箱：这是唯一的槽位写入点，改完立刻落盘。
+            // 之前依赖「关界面时保存」，玩家直接退出就丢了。
+            if (!empty($c->chest['ender'])) {
+                $this->saveEnderSlots(
+                    (string) ($c->chest['owner'] ?? ''),
+                    array_slice($c->chest['slots'], 0, 27)
+                );
+            }
 
             return;
         }
