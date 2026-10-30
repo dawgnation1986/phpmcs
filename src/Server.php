@@ -3734,10 +3734,22 @@ final class Server
                     [$bx3, $by3, $bz3] = $wc->sleepBed;
                     $ch3 = $this->world->chunk($bx3 >> 4, $bz3 >> 4);
                     $real = $ch3->blockState($bx3 & 15, $by3, $bz3 & 15);
-                    $wc->send(self::C_BLOCK_CHANGE, (new Writer())
-                        ->raw($this->packPositionBytes($bx3, $by3, $bz3))
-                        ->varInt(0));
-                    $this->pendingBedRestore[] = [microtime(true) + 0.2, $bx3, $by3, $bz3, $real];
+                    // 床是两格，客户端记的可能是头也可能是脚 —— 两半都对它发一次空气
+                    $meta3 = $real & 15;
+                    $dir3 = $meta3 & 3;
+                    $off3 = [[0, 1], [-1, 0], [0, -1], [1, 0]][$dir3];
+                    $isHead3 = ($meta3 & 0x8) !== 0;
+                    $pairX = $bx3 + ($isHead3 ? -$off3[0] : $off3[0]);
+                    $pairZ = $bz3 + ($isHead3 ? -$off3[1] : $off3[1]);
+                    $pairReal = $ch3 === null ? 0
+                        : $this->world->chunk($pairX >> 4, $pairZ >> 4)
+                            ->blockState($pairX & 15, $by3, $pairZ & 15);
+                    foreach ([[$bx3, $bz3, $real], [$pairX, $pairZ, $pairReal]] as [$qxx, $qzz, $qstate]) {
+                        $wc->send(self::C_BLOCK_CHANGE, (new Writer())
+                            ->raw($this->packPositionBytes($qxx, $by3, $qzz))
+                            ->varInt(0));
+                        $this->pendingBedRestore[] = [microtime(true) + 0.2, $qxx, $by3, $qzz, $qstate];
+                    }
                     $wc->sleepBed = null;
                 }
                 foreach ($this->conns as $sp2) {
