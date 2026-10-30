@@ -531,6 +531,14 @@ final class Server
         if ($removed > 0) {
             $this->log("  背包清洗：丢掉 {$removed} 个无效物品");
         }
+        // 排查用：把背包 id 打出来，一眼看出有没有漏网的无效 id
+        $ids = [];
+        foreach ($c->inventory as $slot => $it) {
+            $ids[] = "{$slot}:" . $it['id'];
+        }
+        if ($ids !== []) {
+            $this->log('  背包内容 ' . implode(' ', $ids));
+        }
         $this->sendPlayerInventory($c);
         $c->resendInvAt = microtime(true) + 1.0;
 
@@ -2118,7 +2126,8 @@ final class Server
      */
     private const NO_ITEM = [
         26, 34, 36, 51, 55, 59, 62, 63, 64, 68, 71, 75, 93, 94,
-        104, 105, 132, 143, 144, 149, 150, 193, 194, 195, 196, 197,
+        104, 105, 132, 143, 144, 149, 150, 176, 177,
+        193, 194, 195, 196, 197,
     ];
 
     private static function hasItem(int $id): bool
