@@ -210,6 +210,9 @@ final class Server
 
     /** @var array 画 [x,y,z,title,dir,yaw] */
     private array $paintings = [];
+
+    /** @var array 盔甲架 eid => [x,y,z] */
+    private array $armorStands = [];
     /** @var array<int, array{id:int,count:int,meta:int,x:float,y:float,z:float,at:float,expire:float}> */
     private array $drops = [];
     /** @var array<string, array{0:int,1:int,2:int}> 改了方块的 section，要重发给客户端 */
@@ -758,6 +761,23 @@ final class Server
         $this->log(sprintf('  生成实体 type=%d eid=%d @ %.1f,%.1f,%.1f data=%d', $type, $eid, $px, $py, $pz, $data));
     }
 
+    /** 盔甲架：走 Spawn Mob（活体），不是 Spawn Object */
+    private function spawnArmorStand(int $x, int $y, int $z): void
+    {
+        $eid = $this->nextEntityId++;
+        foreach ($this->players() as $p) {
+            $p->send(self::C_SPAWN_MOB, (new Writer())
+                ->varInt($eid)->byte(30)
+                ->int($x * 32)->int($y * 32)->int($z * 32)
+                ->byte(0)->byte(0)->byte(0)
+                ->short(0)->short(0)->short(0)
+                ->unsignedByte(0x00)->unsignedByte(0x00)
+                ->unsignedByte(0x7F));
+        }
+        $this->armorStands[$eid] = [$x, $y, $z];
+        $this->log(sprintf('  生成盔甲架 eid=%d @ %d,%d,%d', $eid, $x, $y, $z));
+    }
+
     /** 生成一艘船（实体，不是方块）。type=1，data=0 不带速度。 */
     private function spawnBoat(float $px, float $py, float $pz, float $yaw): void
     {
@@ -1171,14 +1191,13 @@ final class Server
 
                 // 展示框(389)：Spawn Object type=71，data 是朝向
                 if ($itemId === 389) {
-                    // 1.8 的方向索引是「水平编号」：南0 西1 北2 东3
-                    $faceMap = [2 => 2, 3 => 0, 4 => 1, 5 => 3];
-                    $d = $faceMap[$face] ?? 0;
-                    $off2 = [[0, 0, 1], [-1, 0, 0], [0, 0, -1], [1, 0, 0]][$d];
-                    $px4 = $x + 0.5 + $off2[0] * 0.5;
-                    $py4 = $y + 0.5;
-                    $pz4 = $z + 0.5 + $off2[2] * 0.5;
-                    $this->spawnObject(71, $px4, $py4, $pz4, $d);
+                    // 客户端 bcy.java 里 type=71 是这么建的：
+                    //   new EntityItemFrame(world, new BlockPos(floor(x),floor(y),floor(z)),
+                    //                       EnumFacing.byIndex(data))
+                    // 所以位置必须是**方块坐标**（不能 +0.5），
+                    // data 是 EnumFacing 索引：2=北 3=南 4=西 5=东。
+                    $d = ($face >= 2 && $face <= 5) ? $face : 3;
+                    $this->spawnObject(71, (float) $x, (float) $y, (float) $z, $d);
                     $slot4 = 36 + $c->heldSlot;
                     if (isset($c->inventory[$slot4])) {
                         if (--$c->inventory[$slot4]['count'] <= 0) {
@@ -1190,9 +1209,11 @@ final class Server
                     break;
                 }
 
-                // 盔甲架(30)：Spawn Object type=30
+                // 盔甲架(30)：它是「活体」，客户端 Spawn Object 的分支里没有 30，
+                // 必须走 Spawn Mob(0x0F)。参数：eid,type,x,y,z,yaw,pitch,headPitch,
+                // vx,vy,vz, metadata(至少一条结束标记)。
                 if ($itemId === 416) {
-                    $this->spawnObject(30, $x + 0.5, $y + 0.5, $z + 0.5, 0);
+                    $this->spawnArmorStand($x, $y, $z);
                     $slot5 = 36 + $c->heldSlot;
                     if (isset($c->inventory[$slot5])) {
                         if (--$c->inventory[$slot5]['count'] <= 0) {
@@ -3876,6 +3897,18 @@ final class Server
                         $w2->short(0)->short(0)->short(0);
                     }
                     $ep->send(self::C_SPAWN_OBJECT, $w2);
+                }
+                foreach ($this->armorStands as $aeid => [$ax5, $ay5, $az5]) {
+                    if (abs($ax5 - $ep->x) > 48 || abs($az5 - $ep->z) > 48) {
+                        continue;
+                    }
+                    $ep->send(self::C_SPAWN_MOB, (new Writer())
+                        ->varInt((int) $aeid)->byte(30)
+                        ->int($ax5 * 32)->int($ay5 * 32)->int($az5 * 32)
+                        ->byte(0)->byte(0)->byte(0)
+                        ->short(0)->short(0)->short(0)
+                        ->unsignedByte(0x00)->unsignedByte(0x00)
+                        ->unsignedByte(0x7F));
                 }
                 foreach ($this->paintings as [$px5, $py5, $pz5, $pt5, $pd5, $pyaw5]) {
                     if (abs($px5 - $ep->x) > 48 || abs($pz5 - $ep->z) > 48) {
