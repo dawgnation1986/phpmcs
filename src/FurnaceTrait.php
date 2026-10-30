@@ -312,6 +312,9 @@ trait FurnaceTrait
         }
         $this->saveFurnaces();
         $this->sendFurnaceWindow($c);
+        // 背包也刷一遍：只刷窗口的话，客户端对背包的本地预测会和服
+        // 务端分叉，再打开一次 GUI 就会看到「多出来一份」。
+        $this->sendPlayerInventory($c);
     }
 
     /** 每 2 秒跑一次烧炼 */

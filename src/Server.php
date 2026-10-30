@@ -1253,8 +1253,14 @@ final class Server
                     $this->resetDrag($c);
                 }
                 if ($mode === 5) {
-                    // 拖动开始/经过/结束，slot=-999 也要交给 handleDrag
-                    $this->handleDrag($c, $windowId, $slot, $button);
+                    // 拖动暂时停用：窗口拖动会和点击路径改同一份槽位数据，
+                    // 表现为「煤炭凭空消失」「Shift 填充后再开 GUI 物品多一份」。
+                    // 先把它关掉（点一下、Shift 点都还能用），等点击路径稳定了再开。
+                    $this->resetDrag($c);
+                    if ($slot === -999 && $c->cursor !== null) {
+                        // 把光标上的东西还给玩家，别让它挂在手上丢掉
+                        $this->returnCursor($c);
+                    }
                 } elseif ($windowId === 2) {
                     $this->clickWorkbench($c, $slot, $button, $mode, $cursor);
                 } elseif ($windowId === 0 && $mode === 4) {
