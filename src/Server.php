@@ -163,6 +163,8 @@ final class Server
     private const C_CHUNK_DATA = 0x21;
     /** 1.8 的瓦片实体包：箱子这类方块没有它客户端就不画 */
     /** 窗口进度条：熔炉的余火/烧炼进度靠它同步 */
+    /** S->C SignEditorOpen：只带坐标，客户端收到就弹输入框 */
+    private const C_SIGN_EDITOR = 0x36;
     private const C_WINDOW_PROPERTY = 0x31;
     private const C_UPDATE_SIGN = 0x33;   // S->C Update Sign
     private const C_UPDATE_TILE_ENTITY = 0x35;
@@ -661,6 +663,17 @@ final class Server
      * 告示牌文字包 0x33。
      * 1.8 的每行是 JSON 文本组件；玩家输入的是纯文本，这里包一层 {"text":...}。
      */
+    /**
+     * 0x36 SignEditorOpen：只带坐标，客户端收到就弹输入框。
+     * 这是 1.8 里「打开告示牌编辑界面」的唯一途径 ——
+     * 0x33 只负责显示文字，不会弹编辑器。
+     */
+    private function openSignEditor(Connection $c, int $x, int $y, int $z): void
+    {
+        $c->send(self::C_SIGN_EDITOR, (new Writer())
+            ->raw($this->packPositionBytes($x, $y, $z)));
+    }
+
     private function sendSign(Connection $c, int $x, int $y, int $z, array $lines): void
     {
         $lines = array_pad(array_slice(array_values($lines), 0, 4), 4, '');
@@ -674,17 +687,6 @@ final class Server
         // 关键：客户端那边**必须先有 TileEntitySign**，0x33 才认。
         // 只发 0x33 会报 "Unable to locate sign at ..."，编辑器也打不开。
         // 所以先用 0x35(action=3) 建出 TE，再发 0x33 填文字。
-        $nbt = Nbt::write(Tag::compound([
-            'id' => Tag::str('Sign'),
-            'x' => Tag::int($x), 'y' => Tag::int($y), 'z' => Tag::int($z),
-            'Text1' => Tag::str($out[0]), 'Text2' => Tag::str($out[1]),
-            'Text3' => Tag::str($out[2]), 'Text4' => Tag::str($out[3]),
-        ]));
-        $c->send(self::C_UPDATE_TILE_ENTITY, (new Writer())
-            ->raw($this->packPositionBytes($x, $y, $z))
-            ->byte(9)   // 1.8 的 action：9 = 告示牌（3 是信标，写错客户端就不认）
-            ->raw($nbt));
-
         $c->send(self::C_UPDATE_SIGN, (new Writer())
             ->raw($this->packPositionBytes($x, $y, $z))
             ->string($out[0])->string($out[1])->string($out[2])->string($out[3]));
@@ -964,6 +966,7 @@ final class Server
                 // 1.8 里 S33 既是「显示文字」也是「打开编辑器」——
                 // 客户端收到且距离 <8 格就会弹出输入框。
                 if ($hitId === 63 || $hitId === 68) {
+                    $this->openSignEditor($c, $x, $y, $z);
                     foreach ($this->world->signsInChunk($x >> 4, $z >> 4) as [$sgx, $sgy, $sgz, $slines]) {
                         if ($sgx === $x && $sgy === $y && $sgz === $z) {
                             $this->sendSign($c, $sgx, $sgy, $sgz, $slines);
