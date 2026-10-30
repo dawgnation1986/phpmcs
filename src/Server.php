@@ -731,7 +731,7 @@ final class Server
     {
         $eid = $this->nextEntityId++;
         foreach ($this->players() as $p) {
-            $p->send(self::C_SPAWN_OBJECT, (new Writer())
+            $w = (new Writer())
                 ->varInt($eid)
                 ->byte($type)
                 ->int((int) ($px * 32))
@@ -739,7 +739,14 @@ final class Server
                 ->int((int) ($pz * 32))
                 ->byte(0)
                 ->byte((int) ($yaw / 360.0 * 256))
-                ->int($data));
+                ->int($data);
+            // 客户端规定：data > 0 时同一个包里还要跟 3 个 short 速度。
+            // 少这几个字节就会越界崩溃（展示框就是这么炸的）。
+            // 注意必须拼在同一个 Writer 里，不能单独发一个包。
+            if ($data > 0) {
+                $w->short(0)->short(0)->short(0);
+            }
+            $p->send(self::C_SPAWN_OBJECT, $w);
         }
         $this->log(sprintf('  生成实体 type=%d eid=%d @ %.1f,%.1f,%.1f data=%d', $type, $eid, $px, $py, $pz, $data));
     }
@@ -1133,10 +1140,14 @@ final class Server
                     $title = $titles[random_int(0, count($titles) - 1)];
                     $peid = $this->nextEntityId++;
                     foreach ($this->players() as $pp2) {
+                        // gs 的字段顺序（客户端 gs.java:27-34）：
+                        //   string 标题, int x, int y, int z, float 朝向, byte 方向
+                        // 不是 long 坐标，也没有 eid —— 之前两处都写错了，
+                        // 客户端按 float 读就会越界崩溃。
                         $pp2->send(self::C_SPAWN_PAINTING, (new Writer())
-                            ->varInt($peid)
                             ->string($title)
-                            ->raw($this->packPositionBytes($x, $y, $z))
+                            ->int($x)->int($y)->int($z)
+                            ->float((float) $c->yaw)
                             ->byte($pd));
                     }
                     $this->log("  {$c->username} 放画 {$title} @ {$x},{$y},{$z} 朝向 {$pd}");
