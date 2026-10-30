@@ -31,7 +31,6 @@ trait BrewingTrait
         382 => 3,    // 河豚 -> 水下呼吸(3)
         378 => 4,    // 岩浆膏 -> 抗火(4)
         375 => 5,    // 蜘蛛眼 -> 剧毒(5)
-        377 => 6,    // 烈焰粉 -> 力量(6)
         370 => 7,    // 恶魂之泪 -> 再生(7)
         373 => 0,    // 药水（还原）
     ];
@@ -70,7 +69,7 @@ trait BrewingTrait
         $this->loadBrews();
         $k = $x . ',' . $y . ',' . $z;
         if (!isset($this->brews[$k])) {
-            $this->brews[$k] = ['slots' => [null, null, null, null, null], 'brew' => 0, 'fuel' => 0];
+            $this->brews[$k] = ['slots' => [null, null, null, null], 'brew' => 0, 'fuel' => 0];
             $this->saveBrews();
         }
     }
@@ -89,7 +88,7 @@ trait BrewingTrait
             ->byte(5)                                  // 酿造台用 windowId=5，避开箱子/熔炉
             ->string('minecraft:brewing_stand')
             ->string(json_encode(['text' => '酿造台'], JSON_UNESCAPED_UNICODE))
-            ->byte(41));                               // 5 格 + 36 背包
+            ->byte(40));                               // 1.8 只有 4 格 + 36 背包
 
         $this->sendBrewWindow($c);
     }
@@ -104,7 +103,7 @@ trait BrewingTrait
         $out = [];
         // 必须固定发 5 格：少一格客户端后面的背包就会整体前移，
         // 表现就是「点这里东西跑到别处」。
-        for ($i = 0; $i < 5; $i++) {
+        for ($i = 0; $i < 4; $i++) {
             $out[] = $b['slots'][$i] ?? null;
         }
         for ($i = 9; $i <= 44; $i++) {
@@ -151,17 +150,17 @@ trait BrewingTrait
             $this->ensureBrew($c->brewing['x'], $c->brewing['y'], $c->brewing['z']);
         }
         $get = function (int $s) use ($c, $k) {
-            if ($s < 5) {
+            if ($s < 4) {
                 return $this->brews[$k]['slots'][$s] ?? null;
             }
-            return $c->inventory[9 + ($s - 5)] ?? null;
+            return $c->inventory[9 + ($s - 4)] ?? null;
         };
         $put = function (int $s, ?array $item) use ($c, $k): void {
-            if ($s < 5) {
+            if ($s < 4) {
                 $this->brews[$k]['slots'][$s] = $item;
                 return;
             }
-            $inv = 9 + ($s - 5);
+            $inv = 9 + ($s - 4);
             if ($item === null) {
                 unset($c->inventory[$inv]);
             } else {
@@ -171,7 +170,7 @@ trait BrewingTrait
 
         $current = $get($slot);
         if ($mode === 3) {
-            if ($slot >= 0 && $slot <= 40 && $current !== null) {
+            if ($slot >= 0 && $slot <= 39 && $current !== null) {
                 $c->cursor = $current;
                 $this->sendBrewWindow($c);
                 $this->sendPlayerInventory($c);
@@ -179,7 +178,7 @@ trait BrewingTrait
             return;
         }
         if ($mode === 1 && $current !== null) {
-            $range = $slot < 5 ? [5, 40] : [0, 4];
+            $range = $slot < 4 ? [4, 39] : [0, 3];
             for ($i = $range[0]; $i <= $range[1]; $i++) {
                 if ($get($i) !== null) {
                     continue;
@@ -221,7 +220,18 @@ trait BrewingTrait
 
         foreach ($this->brews as $k => &$b) {
             $ing = $b['slots'][3] ?? null;
-            if ($ing === null || !isset(self::BREW_RECIPES[$ing['id']])) {
+
+            // 1.8：烈焰粉不是独立槽位，它放在材料格（槽 3）里当燃料。
+            // 材料格是烈焰粉且没燃料时，先充 20 次。
+            if ($ing !== null && (int) $ing['id'] === 377 && (int) $b['fuel'] <= 0) {
+                $b['fuel'] = 20;
+                $b['slots'][3] = ((int) $ing['count'] > 1)
+                    ? ['id' => 377, 'count' => (int) $ing['count'] - 1, 'damage' => 0]
+                    : null;
+                $ing = $b['slots'][3] ?? null;
+            }
+            if ($ing === null || (int) $ing['id'] === 377
+                || !isset(self::BREW_RECIPES[$ing['id']]) || (int) $b['fuel'] <= 0) {
                 continue;
             }
             // 三个槽里至少要有一个水瓶
