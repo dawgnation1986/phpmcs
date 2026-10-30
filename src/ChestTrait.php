@@ -219,6 +219,12 @@ trait ChestTrait
             return;
         }
 
+        // 防御：不是真正的地图箱子（缺坐标/异常状态）就别写盘。
+        // 之前这里没判，断开连接时会抛 TypeError 把整个服务端带崩。
+        if (!isset($chest['x'], $chest['y'], $chest['z'])) {
+            return;
+        }
+
         $this->chests->save($chest['x'], $chest['y'], $chest['z'], array_slice($slots, 0, 27));
         $this->world->markChunkDirty($chest['x'], $chest['z']);
     }
