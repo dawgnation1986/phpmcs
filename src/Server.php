@@ -2335,10 +2335,12 @@ final class Server
             return [372, $meta >= 3 ? 2 + random_int(0, 2) : 1];
         }
         if ($id === 141) {
-            return [391, 1];   // 胡萝卜
+            // 原版：成熟(age 7) 掉 1 + 0~3 个，没熟掉 1 个
+            return [391, $meta >= 7 ? 1 + random_int(0, 3) : 1];
         }
         if ($id === 142) {
-            return [392, 1];   // 马铃薯
+            // 马铃薯同理；原版还有 2% 毒马铃薯，这里按普通土豆算
+            return [392, $meta >= 7 ? 1 + random_int(0, 3) : 1];
         }
 
         // 概率类的先处理
