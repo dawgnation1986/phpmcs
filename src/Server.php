@@ -611,6 +611,13 @@ final class Server
 
         // 告示牌：0x33 Update Sign，同样随区块补发
         foreach ($this->world->signsInChunk($cx, $cz) as [$sgx, $sgy, $sgz, $slines]) {
+            // 只对真的是告示牌方块的位置发包。老存档里可能残留
+            // 「Sign TE 存在但方块是书架」的脏数据，发了客户端会报
+            // Unable to locate sign。
+            $sid = $chunk->blockState($sgx & 15, $sgy, $sgz & 15) >> 4;
+            if ($sid !== 63 && $sid !== 68) {
+                continue;
+            }
             $this->sendSign($c, $sgx, $sgy, $sgz, $slines);
         }
 
@@ -968,11 +975,9 @@ final class Server
 
                 if ($hitId === 26) {
                     if ($this->isNight()) {
-                        // 先让客户端躺下（S0A Use Bed），3 秒后再叫他起来，
-                        // 这样能看到原版那种「躺一会儿」的过程。
-                        $c->send(self::C_USE_BED, (new Writer())
-                            ->varInt($c->entityId)
-                            ->raw($this->packPositionBytes($x, $y, $z)));
+                        // 不再发 S0A：1.8 客户端进躺姿后，服务端没法可靠地
+                        // 把它叫起来（点「起床」会卡住）。改成只等 3 秒，
+                        // 保留「躺一会儿」的节奏但不进入床 GUI。
                         $this->sleeping[$c->entityId] = microtime(true) + 3.0;
                         $this->sendChat($c, ['text' => '你躺下了……', 'color' => 'gray'], 1);
                         $this->log('  ' . $c->username . ' 躺下 @ ' . $x . ',' . $y . ',' . $z);
@@ -1519,6 +1524,24 @@ final class Server
         $meta = $state & 0x0F;
         if ($id === 7) {
             return; // 基岩挖不动
+        }
+
+        if ($id === 26) {
+            // 床是两格：meta 的 0x8 位标记「这是头」，低两位是朝向。
+            // 打掉任意一半，另一半也要一起清 —— 之前只掉脚那一半，
+            // 剩下的枕头悬在半空。
+            $dir = $meta & 3;
+            $off = [[0, 1], [-1, 0], [0, -1], [1, 0]][$dir];
+            $isHead = ($meta & 0x8) !== 0;
+            $ox = $isHead ? -$off[0] : $off[0];
+            $oz = $isHead ? -$off[1] : $off[1];
+            $ox2 = $x + $ox;
+            $oz2 = $z + $oz;
+            $ch2 = $this->world->chunk($ox2 >> 4, $oz2 >> 4);
+            if (($ch2->blockState($ox2 & 15, $y, $oz2 & 15) >> 4) === 26) {
+                $ch2->setBlock($ox2 & 15, $y, $oz2 & 15, 0, 0);
+                $this->broadcastBlockChange($ox2, $y, $oz2, 0);
+            }
         }
 
         if ($id === 175) {
@@ -3662,10 +3685,6 @@ final class Server
                     if ($sp2->closed || $sp2->entityId !== $eid) {
                         continue;
                     }
-                    // (-1,-1,-1) 让客户端结束躺姿，再补一个位置包把姿势复位
-                    $sp2->send(self::C_USE_BED, (new Writer())
-                        ->varInt($eid)
-                        ->raw($this->packPositionBytes(-1, -1, -1)));
                     $sp2->send(self::C_POS_LOOK, (new Writer())
                         ->double($sp2->x)->double($sp2->y)->double($sp2->z)
                         ->float($sp2->yaw)->float($sp2->pitch)->byte(0));
