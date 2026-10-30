@@ -213,6 +213,9 @@ final class Server
 
     /** @var array 盔甲架 eid => [x,y,z] */
     private array $armorStands = [];
+
+    /** 上次重发实体的时刻 */
+    private float $lastEntityResend = 0.0;
     /** @var array<int, array{id:int,count:int,meta:int,x:float,y:float,z:float,at:float,expire:float}> */
     private array $drops = [];
     /** @var array<string, array{0:int,1:int,2:int}> 改了方块的 section，要重发给客户端 */
@@ -1163,7 +1166,9 @@ final class Server
                 // 不用算多格尺寸的角点偏移 —— 大的等以后再做。
                 if ($itemId === 321) {
                     $pd = ($face >= 2 && $face <= 5) ? ($face - 2) : 0;
-                    $titles = ['kebab', 'aztec', 'alban', 'aztec2', 'bomb', 'plant', 'wasteland'];
+                    // EnumArt 的名字是首字母大写的，全小写 byName 查不到 → 返回 null
+                    // → 客户端拿 null 建实体，直接崩（就是「游戏因为实体 null 崩溃」）。
+                    $titles = ['Kebab', 'Aztec', 'Alban', 'Aztec2', 'Bomb', 'Plant', 'Wasteland'];
                     $title = $titles[random_int(0, count($titles) - 1)];
                     $peid = $this->nextEntityId++;
                     foreach ($this->players() as $pp2) {
@@ -3904,7 +3909,7 @@ final class Server
         // 实体保活：客户端在区块重载/某些情况下会把实体弄丢，
         // 服务端只发一次就再也补不回来了（盔甲架/画「放完就消失」就是这个）。
         // 每 2 秒把附近的实体重发一遍，成本很低。
-        if (!isset($this->lastEntityResend) || $now - $this->lastEntityResend >= 2.0) {
+        if ($now - $this->lastEntityResend >= 2.0) {
             $this->lastEntityResend = $now;
             foreach ($this->players() as $ep) {
                 foreach ($this->spawnedEntities as $eid2 => $ent2) {
