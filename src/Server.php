@@ -662,6 +662,20 @@ final class Server
                 ? $t
                 : json_encode(['text' => $t], JSON_UNESCAPED_UNICODE);
         }
+        // 关键：客户端那边**必须先有 TileEntitySign**，0x33 才认。
+        // 只发 0x33 会报 "Unable to locate sign at ..."，编辑器也打不开。
+        // 所以先用 0x35(action=3) 建出 TE，再发 0x33 填文字。
+        $nbt = Nbt::write(Tag::compound([
+            'id' => Tag::str('Sign'),
+            'x' => Tag::int($x), 'y' => Tag::int($y), 'z' => Tag::int($z),
+            'Text1' => Tag::str($out[0]), 'Text2' => Tag::str($out[1]),
+            'Text3' => Tag::str($out[2]), 'Text4' => Tag::str($out[3]),
+        ]));
+        $c->send(self::C_UPDATE_TILE_ENTITY, (new Writer())
+            ->raw($this->packPositionBytes($x, $y, $z))
+            ->byte(3)
+            ->raw($nbt));
+
         $c->send(self::C_UPDATE_SIGN, (new Writer())
             ->raw($this->packPositionBytes($x, $y, $z))
             ->string($out[0])->string($out[1])->string($out[2])->string($out[3]));
@@ -3715,13 +3729,7 @@ final class Server
                     $p->send(self::C_BLOCK_CHANGE, (new Writer())
                         ->raw($this->packPositionBytes($bx, $by, $bz))
                         ->varInt($st));
-                    if ($p->chestFixRound === 1 && !$p->chestHinted) {
-                        $p->chestHinted = true;
-                        $this->sendChat($p, [
-                            'text' => '提示：附近这些「书架」其实是箱子（1.8 客户端渲染限制），右键可正常打开存取。',
-                            'color' => 'gray',
-                        ], 1);
-                    }
+
                     $sent++;
                 }
             }
