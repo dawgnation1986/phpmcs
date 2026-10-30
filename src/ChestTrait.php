@@ -124,9 +124,9 @@ trait ChestTrait
             $c->chest['slots'][$slot] = $item;
             // 末影箱：这是唯一的槽位写入点，改完立刻落盘。
             // 之前依赖「关界面时保存」，玩家直接退出就丢了。
-            if (!empty($c->chest['ender'])) {
-                $this->saveEnderSlots(
-                    (string) ($c->chest['owner'] ?? ''),
+            if (!empty($c->chest['store'])) {
+                $c->chest['store']->save(
+                    (int) $c->chest['x'], (int) $c->chest['y'], (int) $c->chest['z'],
                     array_slice($c->chest['slots'], 0, 27)
                 );
             }
@@ -221,9 +221,10 @@ trait ChestTrait
             return;
         }
 
-        // 末影箱：不走世界里的 ChestStore，存到玩家自己的末影背包
-        if (!empty($chest['ender'])) {
-            $this->saveEnderSlots((string) ($chest['owner'] ?? ''), array_slice($slots, 0, 27));
+        // 末影箱：用玩家自己的 ChestStore（每个玩家一个文件），
+        // 不走世界那份，也不 markChunkDirty（那个坐标是虚拟的）。
+        if (!empty($chest['store'])) {
+            $chest['store']->save((int) $chest['x'], (int) $chest['y'], (int) $chest['z'], array_slice($slots, 0, 27));
             return;
         }
 

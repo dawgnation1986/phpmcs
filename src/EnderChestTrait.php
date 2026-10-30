@@ -14,6 +14,9 @@ trait EnderChestTrait
 {
     /** @var array<string, array> 小写玩家名 => 27 格 */
     private array $enderInvs = [];
+
+    /** @var array 玩家名 => ChestStore（末影箱专用） */
+    private array $enderStores = [];
     private bool $enderLoaded = false;
 
     private function enderFile(): string
@@ -81,20 +84,26 @@ trait EnderChestTrait
     /** 打开末影箱界面 */
     private function openEnderChest(Connection $c): void
     {
-        // 和开箱子一样：先把别的容器状态清掉，否则点击会被分发错
+        // 完全复用「普通箱子」那条已经跑通的路径：
+        // 每个玩家一个独立的 ChestStore 文件，坐标固定 (8,4,8)，
+        // $c->chest 的形状和 openChest 一模一样，只多带一个 store。
+        $store = $this->enderStore($c->username);
+        $store->ensure(8, 4, 8);
+        $slots = $store->load(8, 4, 8);
+
         $c->furnace = null;
         $this->closeChest($c);
         $this->closeWorkbench($c);
         $this->returnCraftGrid($c);
 
-        $slots = $this->enderSlots($c->username);
         $c->chest = [
-            'x' => 0, 'y' => 0, 'z' => 0,
+            'x' => 8, 'y' => 4, 'z' => 8,
             'size' => 27,
             'partner' => null,
             'slots' => $slots,
             'ender' => true,
             'owner' => $c->username,
+            'store' => $store,
         ];
 
         $c->send(self::C_OPEN_WINDOW, (new Writer())
@@ -109,19 +118,23 @@ trait EnderChestTrait
         }
         $c->send(self::C_WINDOW_ITEMS, $w);
 
-        // 兜底：整窗覆盖之外，再逐格发一次 Set Slot。
-        // 有些客户端对 WINDOW_ITEMS 的处理不稳（普通箱子能用但末影箱不显示），
-        // 单格下发是最不容易被忽略的形式。
-        foreach ($slots as $i => $it) {
-            if ($it === null) {
-                continue;
+        $this->log("  {$c->username} 打开末影箱（" . count(array_filter($slots, 'is_array')) . " 格有物品）");
+    }
+
+    /** 每个玩家一个 ChestStore 文件 */
+    private function enderStore(string $name): \PhpMc\World\ChestStore
+    {
+        $key = strtolower($name);
+        if (!isset($this->enderStores[$key])) {
+            $dir = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'cache';
+            if (!is_dir($dir)) {
+                @mkdir($dir, 0777, true);
             }
-            $c->send(self::C_SET_SLOT, (new Writer())
-                ->byte(1)
-                ->short($i)
-                ->raw($this->slotBytes($it)));
+            $this->enderStores[$key] = new \PhpMc\World\ChestStore(
+                $dir . DIRECTORY_SEPARATOR . 'ender-' . preg_replace('/[^a-z0-9_]/', '_', $key) . '.json'
+            );
         }
 
-        $this->log("  {$c->username} 打开末影箱（" . count(array_filter($slots, 'is_array')) . " 格有物品）");
+        return $this->enderStores[$key];
     }
 }
