@@ -143,6 +143,7 @@ trait BrewingTrait
         if ($c->brewing === null) {
             return;
         }
+        $this->log("  酿造点击 slot={$slot} button={$button} mode={$mode} cursor=" . json_encode($c->cursor));
         $k = $c->brewing['x'] . ',' . $c->brewing['y'] . ',' . $c->brewing['z'];
         if (!isset($this->brews[$k])) {
             $this->ensureBrew($c->brewing['x'], $c->brewing['y'], $c->brewing['z']);

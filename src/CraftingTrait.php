@@ -340,6 +340,9 @@ trait CraftingTrait
         $out = self::matchCraft2x2($c->craftGrid);
         if ($out === null) {
             $this->log('  2x2 输出为空 grid=' . json_encode($c->craftGrid) . ' cursor=' . json_encode($c->cursor));
+            // 客户端本地有完整配方表，会先画出结果；服务端不认就会「拿起来又消失」。
+            // 与其让人以为丢东西，不如明说一句。
+            $this->sendChat($c, ['text' => '服务端还不支持这个配方（结果已撤回）', 'color' => 'red'], 1);
             $this->updateCraftOutput($c);
             $this->sendCursor($c);
 
