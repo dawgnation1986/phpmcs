@@ -724,6 +724,24 @@ final class Server
             ->raw($nbt));
     }
 
+    /** 通用实体生成：type 见 1.8 EntityList（1 船 / 30 盔甲架 / 71 展示框…） */
+    private function spawnObject(int $type, float $px, float $py, float $pz, int $data, float $yaw = 0.0): void
+    {
+        $eid = $this->nextEntityId++;
+        foreach ($this->players() as $p) {
+            $p->send(self::C_SPAWN_OBJECT, (new Writer())
+                ->varInt($eid)
+                ->byte($type)
+                ->int((int) ($px * 32))
+                ->int((int) ($py * 32))
+                ->int((int) ($pz * 32))
+                ->byte(0)
+                ->byte((int) ($yaw / 360.0 * 256))
+                ->int($data));
+        }
+        $this->log(sprintf('  生成实体 type=%d eid=%d @ %.1f,%.1f,%.1f data=%d', $type, $eid, $px, $py, $pz, $data));
+    }
+
     /** 生成一艘船（实体，不是方块）。type=1，data=0 不带速度。 */
     private function spawnBoat(float $px, float $py, float $pz, float $yaw): void
     {
@@ -1104,6 +1122,39 @@ final class Server
                 }
                 // 1.8 有一部分物品 id 和方块 id 不是同一个数（甘蔗、种子、作物…），
                 // 直接拿物品 id 当方块 id 会让服务端拒绝放置。
+                // 展示框(389)：Spawn Object type=71，data 是朝向
+                if ($itemId === 389) {
+                    $d = ($face >= 2 && $face <= 5) ? ($face - 2) : 0;   // 2->0 南 3->1 西 4->2 北 5->3 东
+                    $off2 = [[0, 0, 1], [-1, 0, 0], [0, 0, -1], [1, 0, 0]][$d];
+                    $px4 = $x + 0.5 + $off2[0] * 0.5;
+                    $py4 = $y + 0.5;
+                    $pz4 = $z + 0.5 + $off2[2] * 0.5;
+                    $this->spawnObject(71, $px4, $py4, $pz4, $d);
+                    $slot4 = 36 + $c->heldSlot;
+                    if (isset($c->inventory[$slot4])) {
+                        if (--$c->inventory[$slot4]['count'] <= 0) {
+                            unset($c->inventory[$slot4]);
+                        }
+                        $this->sendPlayerInventory($c);
+                    }
+                    $this->log("  {$c->username} 放展示框 @ {$x},{$y},{$z} 朝向 {$d}");
+                    break;
+                }
+
+                // 盔甲架(30)：Spawn Object type=30
+                if ($itemId === 416) {
+                    $this->spawnObject(30, $x + 0.5, $y + 0.5, $z + 0.5, 0);
+                    $slot5 = 36 + $c->heldSlot;
+                    if (isset($c->inventory[$slot5])) {
+                        if (--$c->inventory[$slot5]['count'] <= 0) {
+                            unset($c->inventory[$slot5]);
+                        }
+                        $this->sendPlayerInventory($c);
+                    }
+                    $this->log("  {$c->username} 放盔甲架 @ {$x},{$y},{$z}");
+                    break;
+                }
+
                 // 船是实体不是方块，必须在 blockId 判定之前拦下来 ——
                 // 否则 blockId=0 会被当成无效放置直接拒掉。
                 if ($itemId === 333) {
