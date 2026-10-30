@@ -675,7 +675,7 @@ final class Server
         ]));
         $c->send(self::C_UPDATE_TILE_ENTITY, (new Writer())
             ->raw($this->packPositionBytes($x, $y, $z))
-            ->byte(3)
+            ->byte(9)   // 1.8 的 action：9 = 告示牌（3 是信标，写错客户端就不认）
             ->raw($nbt));
 
         $c->send(self::C_UPDATE_SIGN, (new Writer())

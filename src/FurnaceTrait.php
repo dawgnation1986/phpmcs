@@ -296,6 +296,18 @@ trait FurnaceTrait
             return;
         }
 
+        // 创造模式中键：mode=3 是「克隆」，把这一格的物品复制一份到光标上。
+        // 之前只认 mode=0，整个包被丢掉 —— 客户端拿到了东西、服端没有，
+        // 再放进背包就「消失」了。
+        if ($mode === 3) {
+            if ($slot >= 0 && $slot <= 38 && $current !== null) {
+                $c->cursor = $current;
+                $this->sendFurnaceWindow($c);
+                $this->sendPlayerInventory($c);
+            }
+            return;
+        }
+
         if ($mode !== 0 || ($button !== 0 && $button !== 1)) {
             return;
         }

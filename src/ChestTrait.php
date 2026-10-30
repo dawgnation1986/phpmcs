@@ -326,6 +326,24 @@ trait ChestTrait
 
             return;
         }
+        // 创造模式中键：mode=3 克隆一格到光标（箱子/末影箱也要支持）
+        if ($mode === 3) {
+            $size3 = $chest['size'] ?? 27;
+            $clone = null;
+            if ($slot >= 0 && $slot < $size3) {
+                $clone = $chest['slots'][$slot] ?? null;
+            } elseif ($slot >= $size3 && $slot < $size3 + 36) {
+                $clone = $c->inventory[9 + ($slot - $size3)] ?? null;
+            }
+            if (is_array($clone)) {
+                $c->cursor = $clone;
+                $this->sendCursor($c);
+                $this->sendPlayerInventory($c);
+            }
+
+            return;
+        }
+
         if ($mode !== 0 || ($button !== 0 && $button !== 1)) {
             $this->sendCursor($c);
 
