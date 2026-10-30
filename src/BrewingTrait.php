@@ -102,8 +102,10 @@ trait BrewingTrait
         $k = $c->brewing['x'] . ',' . $c->brewing['y'] . ',' . $c->brewing['z'];
         $b = $this->brews[$k] ?? ['slots' => array_fill(0, 5, null)];
         $out = [];
-        foreach ($b['slots'] as $it) {
-            $out[] = $it;
+        // 必须固定发 5 格：少一格客户端后面的背包就会整体前移，
+        // 表现就是「点这里东西跑到别处」。
+        for ($i = 0; $i < 5; $i++) {
+            $out[] = $b['slots'][$i] ?? null;
         }
         for ($i = 9; $i <= 44; $i++) {
             $out[] = $c->inventory[$i] ?? null;

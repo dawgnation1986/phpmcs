@@ -2891,6 +2891,25 @@ final class Server
                     'color' => 'green'], 1);
                 break;
 
+            case 'brew':
+                if ($c->brewing === null) {
+                    $this->sendChat($c, ['text' => '先打开酿造台再敲 /brew', 'color' => 'gray'], 1);
+                    break;
+                }
+                $bk = $c->brewing['x'] . ',' . $c->brewing['y'] . ',' . $c->brewing['z'];
+                $rec = $this->brews[$bk] ?? null;
+                if ($rec === null) {
+                    $this->sendChat($c, ['text' => '没有酿造台记录', 'color' => 'red'], 1);
+                    break;
+                }
+                $txt = [];
+                foreach ($rec['slots'] as $i => $it) {
+                    $txt[] = $i . ':' . (is_array($it) ? $it['id'] . 'x' . $it['count'] : '-');
+                }
+                $this->sendChat($c, ['text' => '酿造台 ' . implode(' ', $txt)
+                    . '  进度=' . (int) $rec['brew'] . ' 燃料=' . (int) $rec['fuel'], 'color' => 'aqua'], 1);
+                break;
+
             case 'ender':
                 // 现在数据在玩家自己的 ChestStore 里（cache/ender-<名字>.json）
                 $esl = $this->enderStore($c->username)->load(8, 4, 8);
