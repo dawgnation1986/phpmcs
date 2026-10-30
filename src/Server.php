@@ -1213,7 +1213,8 @@ final class Server
                 // 必须走 Spawn Mob(0x0F)。参数：eid,type,x,y,z,yaw,pitch,headPitch,
                 // vx,vy,vz, metadata(至少一条结束标记)。
                 if ($itemId === 416) {
-                    $this->spawnArmorStand($x, $y, $z);
+                    // 站到点击方块的上面一格，否则会陷进地里半个身子
+                    $this->spawnArmorStand($x, $y + 1, $z);
                     $slot5 = 36 + $c->heldSlot;
                     if (isset($c->inventory[$slot5])) {
                         if (--$c->inventory[$slot5]['count'] <= 0) {
@@ -1417,6 +1418,18 @@ final class Server
                 $targetEid = $r->readVarInt();
                 $action = $r->readByte();
                 if ($action === 1) {          // 1 = 攻击
+                    // 打盔甲架：销毁 + 掉一个架
+                    if (isset($this->armorStands[$targetEid])) {
+                        [$asx, $asy, $asz] = $this->armorStands[$targetEid];
+                        unset($this->armorStands[$targetEid]);
+                        foreach ($this->players() as $pp) {
+                            $pp->send(self::C_DESTROY_ENTITIES, (new Writer())
+                                ->varInt(1)->varInt($targetEid));
+                        }
+                        $this->spawnDrop($asx, $asy, $asz, 416, 1, 0, $c);
+                        $this->log("  打掉盔甲架 eid={$targetEid}");
+                        break;
+                    }
                     // 打我们自己生成的实体（展示框/盔甲架）：销毁 + 掉落
                     if (isset($this->spawnedEntities[$targetEid])) {
                         $ent = $this->spawnedEntities[$targetEid];
