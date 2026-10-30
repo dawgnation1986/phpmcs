@@ -640,6 +640,14 @@ final class Server
             $c->chestSections[$cx . ',' . $cz . ',' . $sy] = [$cx, $cz, $sy];
         }
 
+        // 末影箱（130）：区块数据里有，但客户端重进后经常不画出来。
+        // 逐个补一条方块变更，强制它重建这几个渲染位置。
+        foreach ($chunk->blockPositions(130) as [$ecx, $ecy, $ecz]) {
+            $c->send(self::C_BLOCK_CHANGE, (new Writer())
+                ->raw($this->packPositionBytes($ecx, $ecy, $ecz))
+                ->varInt(130 << 4));
+        }
+
         // 告示牌：0x33 Update Sign，同样随区块补发
         foreach ($this->world->signsInChunk($cx, $cz) as [$sgx, $sgy, $sgz, $slines]) {
             // 只对真的是告示牌方块的位置发包。老存档里可能残留
