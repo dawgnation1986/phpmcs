@@ -56,6 +56,7 @@ trait MobTrait
         $this->mobs[$eid] = [
             'type' => $type, 'x' => $x, 'y' => $y, 'z' => $z,
             'hp' => self::MOB_TYPES[$type][2], 'life' => 0.0, 'lastHit' => 0.0,
+            'target' => 0, 'angryUntil' => 0.0, 'burnAt' => 0.0,
         ];
         foreach ($this->players() as $p) {
             $this->sendMobSpawn($p, $eid, $type, $x, $y, $z);
@@ -95,6 +96,9 @@ trait MobTrait
         }
         $this->mobs[$eid]['hp'] -= $dmg;
         $this->mobs[$eid]['lastHit'] = microtime(true);
+        // 记仇：谁打的就盯谁，10 秒内优先追他（哪怕别人更近）
+        $this->mobs[$eid]['target'] = $attacker->entityId;
+        $this->mobs[$eid]['angryUntil'] = microtime(true) + 10.0;
 
         // 受击动画：0x1A Entity Status，status=2 是「受伤」
         foreach ($this->players() as $pp) {
@@ -146,16 +150,59 @@ trait MobTrait
                 // （横向只认 ±1.3 格），生物离你 4 格就被判「附近没人」直接销毁。
                 $near = null;
                 $bestD = PHP_FLOAT_MAX;
-                foreach ($this->players() as $pp) {
-                    $d = sqrt(($pp->x - $m['x']) ** 2 + ($pp->y - $m['y']) ** 2 + ($pp->z - $m['z']) ** 2);
-                    if ($d < $bestD) {
-                        $bestD = $d;
-                        $near = $pp;
+                // 先看有没有仇恨对象还没过期
+                if (($m['target'] ?? 0) > 0 && $now < ($m['angryUntil'] ?? 0)) {
+                    foreach ($this->players() as $pp) {
+                        if ($pp->entityId !== $m['target']) {
+                            continue;
+                        }
+                        $d = sqrt(($pp->x - $m['x']) ** 2 + ($pp->z - $m['z']) ** 2);
+                        if ($d < 32.0) {
+                            $near = $pp;
+                            $bestD = $d;
+                        }
+                        break;
+                    }
+                }
+                if ($near === null) {
+                    foreach ($this->players() as $pp) {
+                        $d = sqrt(($pp->x - $m['x']) ** 2 + ($pp->y - $m['y']) ** 2 + ($pp->z - $m['z']) ** 2);
+                        if ($d < $bestD) {
+                            $bestD = $d;
+                            $near = $pp;
+                        }
                     }
                 }
                 if ($near === null || $bestD > 64.0) {
                     $this->removeMob($eid);
                     continue;
+                }
+
+                // 亡灵白天在露天会烧起来
+                if (($m['type'] === 54 || $m['type'] === 51) && !$this->isNight()
+                    && $now - ($m['burnAt'] ?? 0) >= 1.0) {
+                    $chk2 = $this->world->chunk(((int) floor($m['x'])) >> 4, ((int) floor($m['z'])) >> 4);
+                    $sky2 = $chk2->skyLight(((int) floor($m['x'])) & 15, (int) floor($m['y']), ((int) floor($m['z'])) & 15);
+                    $blk2 = $chk2->blockLight(((int) floor($m['x'])) & 15, (int) floor($m['y']), ((int) floor($m['z'])) & 15);
+                    if ($sky2 >= 15 && $blk2 < 8) {
+                        $this->mobs[$eid]['burnAt'] = $now;
+                        $this->mobs[$eid]['hp']--;
+                        foreach ($this->players() as $pp) {
+                            $pp->send(self::C_ENTITY_STATUS, (new Writer())->int($eid)->byte(2));
+                        }
+                        if ($this->mobs[$eid]['hp'] <= 0) {
+                            [, , , $drops2] = self::MOB_TYPES[$m['type']];
+                            $this->removeMob($eid);
+                            foreach ($drops2 as [$dId, $dMin, $dMax]) {
+                                $cnt2 = random_int($dMin, $dMax);
+                                for ($q = 0; $q < $cnt2; $q++) {
+                                    $this->spawnDrop((int) floor($m['x']), (int) floor($m['y']),
+                                        (int) floor($m['z']), $dId, 1, 0, $near);
+                                }
+                            }
+                            continue;
+                        }
+                    }
                 }
 
                 $hostile = self::MOB_TYPES[$m['type']][1];
@@ -167,8 +214,38 @@ trait MobTrait
                     $dz = $near->z - $m['z'];
                     $dist = sqrt($dx * $dx + $dz * $dz);
                     if ($dist > 1.6 && $dist < 16.0) {
-                        $nx = $m['x'] + $dx / $dist * 0.3;
-                        $nz = $m['z'] + $dz / $dist * 0.3;
+                        // 八方向试探：正对目标优先，其次斜向，
+                        // 目标格必须能站（脚下实、身上空），且地面落差不超过 1
+                        $step = 0.3;
+                        $dirs = [[$dx, $dz]];
+                        foreach ([[1, 1], [1, -1], [-1, 1], [-1, -1]] as [$sx, $sz]) {
+                            $dirs[] = [$dx + $sx * 1.2, $dz + $sz * 1.2];
+                        }
+                        foreach ([[$dz, -$dx], [-$dz, $dx]] as $perp) {
+                            $dirs[] = [$perp[0], $perp[1]];
+                        }
+                        $moved = false;
+                        foreach ($dirs as [$tx, $tz]) {
+                            $len = sqrt($tx * $tx + $tz * $tz) ?: 1.0;
+                            $cx2 = $m['x'] + $tx / $len * $step;
+                            $cz2 = $m['z'] + $tz / $len * $step;
+                            [$ok2, $gy2] = $this->canStand($cx2, $cz2, (int) floor($m['y']));
+                            if (!$ok2) {
+                                continue;
+                            }
+                            // 不跳崖：目标地面不能比现在低超过 1 格
+                            if ($gy2 < (int) floor($m['y']) - 1) {
+                                continue;
+                            }
+                            $nx = $cx2;
+                            $nz = $cz2;
+                            $moved = true;
+                            break;
+                        }
+                        if (!$moved) {
+                            $nx = $m['x'];
+                            $nz = $m['z'];
+                        }
                     } elseif ($dist <= 2.2 && $now - $m['lastHit'] > 1.5) {
                         $this->damage($near, 1);
                         $this->mobs[$eid]['lastHit'] = $now;
@@ -291,6 +368,35 @@ trait MobTrait
         }
 
         return max($block, $sky);
+    }
+
+    /**
+     * 这格能不能站：返回 [能站, 地面 y]。
+     * 从 fromY+1 往下找 3 层实心块，且上面两格是空的才算。
+     */
+    private function canStand(float $x, float $z, int $fromY): array
+    {
+        $bx = (int) floor($x);
+        $bz = (int) floor($z);
+        $chunk = $this->world->chunk($bx >> 4, $bz >> 4);
+        $solid = static fn (int $id): bool => $id !== 0 && !in_array($id, [
+            6, 8, 9, 10, 11, 31, 32, 37, 38, 39, 40, 50, 51, 59, 78, 83, 106, 111, 175,
+        ], true);
+        for ($gy = $fromY + 1; $gy >= $fromY - 2; $gy--) {
+            $here = $chunk->blockState($bx & 15, $gy, $bz & 15) >> 4;
+            if (!$solid($here)) {
+                continue;
+            }
+            $up1 = $chunk->blockState($bx & 15, $gy + 1, $bz & 15) >> 4;
+            $up2 = $chunk->blockState($bx & 15, $gy + 2, $bz & 15) >> 4;
+            if (!$solid($up1) && !$solid($up2)) {
+                return [true, $gy + 1];
+            }
+
+            return [false, $gy + 1];
+        }
+
+        return [false, $fromY];
     }
 
     private function groundY(int $x, int $z, int $startY): int
