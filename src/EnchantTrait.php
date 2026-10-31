@@ -52,6 +52,23 @@ trait EnchantTrait
         $this->recalcEnchant($c);
     }
 
+    /** 附魔台被挖掉：把槽里的东西吐出来 */
+    private function breakEnchantTable(int $x, int $y, int $z, ?Connection $c): void
+    {
+        $k = $x . ',' . $y . ',' . $z;
+        if (!isset($this->enchants[$k])) {
+            return;
+        }
+        foreach ($this->enchants[$k]['slots'] as $it) {
+            if (is_array($it)) {
+                $this->spawnDrop($x, $y, $z, (int) $it['id'], (int) $it['count'],
+                    (int) ($it['damage'] ?? 0), $c);
+            }
+        }
+        unset($this->enchants[$k]);
+        $this->log("  附魔台被挖掉，槽内物品已掉落 @ {$x},{$y},{$z}");
+    }
+
     private function enchantKey(Connection $c): ?string
     {
         if ($c->enchantTable === null) {

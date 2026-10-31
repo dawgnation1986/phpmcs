@@ -2010,6 +2010,10 @@ final class Server
             $this->unregisterCrop($x, $y, $z);
         }
 
+        if ($id === 116) {
+            $this->breakEnchantTable($x, $y, $z, $c);
+        }
+
         if ($id === 176 || $id === 177) {
             // 旗帜掉落要带颜色（damage = 颜色），走通用掉落会变成白色。
             // 必须 return —— 否则下面那段通用掉落还会再掉一次 176/177 方块，

@@ -34,7 +34,9 @@ trait ChestTrait
                     'lvl' => Tag::short((int) $e['lvl']),
                 ]);
             }
-            $nbt = chr(10) . Nbt::write(Tag::compound([
+            // Nbt::write 已经包含根标签头（type + 名称长度 + 名称），
+            // 再手动加 chr(10) 会让客户端把 0x0A00 读成字符串长度 2560 而断线。
+            $nbt = Nbt::write(Tag::compound([
                 'ench' => Tag::list(10, $list),
                 'RepairCost' => Tag::int(1),
             ]));
