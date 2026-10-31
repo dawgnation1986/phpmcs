@@ -66,6 +66,9 @@ final class Connection
     /** 正在乘坐的载具 eid（0 = 没坐） */
     public int $riding = 0;
 
+    /** 上次重发挂载包的时刻 */
+    public float $rideSyncAt = 0.0;
+
     /** 经验：等级 / 当前级进度(0~1) / 总经验 */
     public int $xpLevel = 0;
     public float $xpProgress = 0.0;
@@ -4656,6 +4659,22 @@ final class Server
                         ->string($pt5)->int($px5)->int($py5)->int($pz5)
                         ->float($pyaw5)->byte($pd5));
                 }
+            }
+        }
+
+        // 乘坐保活：客户端有时会把「骑乘」状态丢掉（船追得慢、位置误差大），
+        // 每 1.5 秒重发一次挂载包，让它重新挂上。
+        foreach ($this->players() as $rp) {
+            if ($rp->riding <= 0 || !isset($this->spawnedEntities[$rp->riding])) {
+                continue;
+            }
+            if ($now - $rp->rideSyncAt < 1.5) {
+                continue;
+            }
+            $rp->rideSyncAt = $now;
+            foreach ($this->players() as $rv) {
+                $rv->send(self::C_ATTACH_ENTITY, (new Writer())
+                    ->int($rp->entityId)->int($rp->riding)->byte(0));
             }
         }
 
