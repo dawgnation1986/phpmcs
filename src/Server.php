@@ -176,6 +176,8 @@ final class Server
     private const C_SPAWN_PAINTING = 0x29;   // gs 在客户端的注册顺序是第 42 个 → 41 = 0x29
     private const C_TIME_UPDATE = 0x03;
     private const C_ENTITY_STATUS = 0x1A;
+    /** S->C Spawn Experience Orb：eid + x/y/z(*32) + 经验值(short) */
+    private const C_SPAWN_XP_ORB = 0x11;
     private const C_ENTITY_MOVE = 0x15;
     /** S->C Set Experience：进度(float) + 等级(varint) + 总经验(varint) */
     private const C_SET_EXPERIENCE = 0x1F;      // 相对移动（客户端插值，看着顺）
@@ -1937,7 +1939,7 @@ final class Server
         // 挖矿经验（原版数值）：煤1 青金石3 钻石4 红石3 绿宝石4 石英1
         $oreXp = [16 => 1, 21 => 3, 56 => 4, 73 => 3, 129 => 4, 153 => 1][$id] ?? 0;
         if ($oreXp > 0) {
-            $this->giveExp($c, $oreXp);
+            $this->spawnXpOrb($x + 0.5, $y + 0.3, $z + 0.5, $oreXp);
         }
         $meta = $state & 0x0F;
         if ($id === 7) {
@@ -2566,12 +2568,12 @@ final class Server
         $eid = $this->nextEntityId++;
         $this->xpOrbs[$eid] = [$x, $y, $z, $amount];
         foreach ($this->players() as $p) {
-            $p->send(self::C_SPAWN_OBJECT, (new Writer())
+            // 经验球有独立的包 0x11（不是 Spawn Object）：
+            // eid + x/y/z(*32) + 经验值(short)
+            $p->send(self::C_SPAWN_XP_ORB, (new Writer())
                 ->varInt($eid)
-                ->byte(1)          // 1 = 经验球（2 是掉落物！）
                 ->int((int) ($x * 32))->int((int) ($y * 32))->int((int) ($z * 32))
-                ->byte(0)->byte(0)
-                ->int(0));
+                ->short($amount));
         }
     }
 
