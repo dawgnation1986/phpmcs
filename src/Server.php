@@ -1910,7 +1910,7 @@ final class Server
         // 挖矿经验（原版数值）：煤1 青金石3 钻石4 红石3 绿宝石4 石英1
         $oreXp = [16 => 1, 21 => 3, 56 => 4, 73 => 3, 129 => 4, 153 => 1][$id] ?? 0;
         if ($oreXp > 0) {
-            $this->giveExp($c, $oreXp);
+            $this->spawnXpOrb($x + 0.5, $y + 0.3, $z + 0.5, $oreXp);
         }
         $meta = $state & 0x0F;
         if ($id === 7) {
@@ -2492,6 +2492,48 @@ final class Server
             $py,
             $pz
         ));
+    }
+
+    /** @var array 经验球 eid => [x,y,z,amount] */
+    private array $xpOrbs = [];
+
+    /** 生成经验球（实体 type=2）。远处的经验也能走过去捡。 */
+    private function spawnXpOrb(float $x, float $y, float $z, int $amount): void
+    {
+        if ($amount <= 0) {
+            return;
+        }
+        $eid = $this->nextEntityId++;
+        $this->xpOrbs[$eid] = [$x, $y, $z, $amount];
+        foreach ($this->players() as $p) {
+            $p->send(self::C_SPAWN_OBJECT, (new Writer())
+                ->varInt($eid)
+                ->byte(2)
+                ->int((int) ($x * 32))->int((int) ($y * 32))->int((int) ($z * 32))
+                ->byte(0)->byte(0)
+                ->int(0));
+        }
+    }
+
+    /** 每拍检查有没有玩家碰到经验球 */
+    private function tickXpOrbs(): void
+    {
+        if ($this->xpOrbs === []) {
+            return;
+        }
+        foreach ($this->xpOrbs as $eid => [$ox, $oy, $oz, $amt]) {
+            foreach ($this->players() as $p) {
+                if (abs($p->x - $ox) > 1.6 || abs($p->z - $oz) > 1.6 || abs($p->y - $oy) > 2.0) {
+                    continue;
+                }
+                unset($this->xpOrbs[$eid]);
+                foreach ($this->players() as $q) {
+                    $q->send(self::C_DESTROY_ENTITIES, (new Writer())->varInt(1)->varInt($eid));
+                }
+                $this->giveExp($p, $amt);
+                break;
+            }
+        }
     }
 
     private function processDrops(): void
@@ -4212,6 +4254,7 @@ final class Server
         }
 
         $this->processDrops();
+        $this->tickXpOrbs();
         $this->tickFluids($now);
         $this->tickFurnaces($now);
         $this->tickBrewing($now);

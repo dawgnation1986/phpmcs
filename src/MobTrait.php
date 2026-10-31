@@ -132,9 +132,8 @@ trait MobTrait
         [, , , $drops] = self::MOB_TYPES[$m['type']];
         // 击杀经验：敌对 5 点，被动 1~3 点
         $xp = self::MOB_TYPES[$m['type']][1] ? 5 : random_int(1, 3);
-        if ($attacker->state === Connection::STATE_PLAY) {
-            $this->giveExp($attacker, $xp);
-        }
+        // 掉经验球，而不是直接塞给玩家 —— 远处击杀也得自己走过去捡
+        $this->spawnXpOrb($m['x'], $m['y'] + 0.3, $m['z'], $xp);
         $this->removeMob($eid);
         foreach ($drops as [$dropId, $dmin, $dmax]) {
             $n = random_int($dmin, $dmax);
