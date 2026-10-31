@@ -171,6 +171,7 @@ final class Server
     private const C_SPAWN_PAINTING = 0x29;   // gs 在客户端的注册顺序是第 42 个 → 41 = 0x29
     private const C_TIME_UPDATE = 0x03;
     private const C_ENTITY_STATUS = 0x1A;
+    private const C_ENTITY_MOVE = 0x15;      // 相对移动（客户端插值，看着顺）
     private const C_ENTITY_LOOK = 0x16;
     private const C_ENTITY_TELEPORT = 0x18;
     private const C_HEAD_LOOK = 0x19;
@@ -2261,7 +2262,9 @@ final class Server
         13 => [13, 1],      // 砂砾（原版 10% 燧石，先按砂砾）
         14 => [14, 1],      // 金矿
         15 => [15, 1],      // 铁矿
-        16 => [16, 1],      // 煤矿
+        16 => [263, 1],     // 煤矿 -> 煤炭（不是矿石方块！）
+        56 => [264, 1],     // 钻石矿 -> 钻石
+        129 => [388, 1],    // 绿宝石矿 -> 绿宝石
         21 => [351, 4],     // 青金石矿 -> 4 个青金石
         24 => [24, 1],      // 砂岩
         30 => [287, 1],     // 蜘蛛网 -> 线

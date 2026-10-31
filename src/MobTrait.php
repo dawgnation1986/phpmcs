@@ -143,7 +143,7 @@ trait MobTrait
 
     private function tickMobs(float $now): void
     {
-        if ($now - $this->lastMobTick >= 0.2) {
+        if ($now - $this->lastMobTick >= 0.1) {
             $this->lastMobTick = $now;
             foreach ($this->mobs as $eid => $m) {
                 // 注意：不能用 nearestPlayer()，那个是捡东西的近距离判定
@@ -216,7 +216,7 @@ trait MobTrait
                     if ($dist > 1.6 && $dist < 16.0) {
                         // 八方向试探：正对目标优先，其次斜向，
                         // 目标格必须能站（脚下实、身上空），且地面落差不超过 1
-                        $step = 0.3;
+                        $step = 0.15;
                         $dirs = [[$dx, $dz]];
                         foreach ([[1, 1], [1, -1], [-1, 1], [-1, -1]] as [$sx, $sz]) {
                             $dirs[] = [$dx + $sx * 1.2, $dz + $sz * 1.2];
@@ -251,8 +251,8 @@ trait MobTrait
                         $this->mobs[$eid]['lastHit'] = $now;
                     }
                 } else {
-                    $nx = $m['x'] + random_int(-3, 3) / 10;
-                    $nz = $m['z'] + random_int(-3, 3) / 10;
+                    $nx = $m['x'] + random_int(-2, 2) / 10;
+                    $nz = $m['z'] + random_int(-2, 2) / 10;
                 }
 
                 // 别穿墙：目标格得是能站的地方（脚下实、身上空）。
@@ -279,11 +279,22 @@ trait MobTrait
                     $this->mobs[$eid]['z'] = $nz;
                     // 朝向按移动方向算，1.8 的 yaw 是 atan2(-dx, dz)
                     $yawByte = self::angle(rad2deg(atan2(-($nx - $m['x']), $nz - $m['z'])));
+                    // 小位移用「相对移动」包，客户端会插值，不再一卡一卡。
+                    // 位移超过 4 格才退回传送包。
+                    $ddx = (int) round(($nx - $m['x']) * 32);
+                    $ddy = (int) round(($ny - $m['y']) * 32);
+                    $ddz = (int) round(($nz - $m['z']) * 32);
+                    $small = abs($ddx) < 128 && abs($ddy) < 128 && abs($ddz) < 128;
                     foreach ($this->players() as $p) {
-                        $p->send(self::C_ENTITY_TELEPORT, (new Writer())
-                            ->varInt($eid)
-                            ->int((int) ($nx * 32))->int((int) ($ny * 32))->int((int) ($nz * 32))
-                            ->byte($yawByte)->byte(0)->bool(true));
+                        if ($small) {
+                            $p->send(self::C_ENTITY_MOVE, (new Writer())
+                                ->varInt($eid)->short($ddx)->short($ddy)->short($ddz)->bool(true));
+                        } else {
+                            $p->send(self::C_ENTITY_TELEPORT, (new Writer())
+                                ->varInt($eid)
+                                ->int((int) ($nx * 32))->int((int) ($ny * 32))->int((int) ($nz * 32))
+                                ->byte($yawByte)->byte(0)->bool(true));
+                        }
                     }
                 }
 
