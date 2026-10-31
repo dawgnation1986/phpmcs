@@ -1658,6 +1658,9 @@ final class Server
                     $atkDamage = $heldAttack === null
                         ? 1
                         : (self::WEAPON_DAMAGE[(int) $heldAttack['id']] ?? 1);
+                    $this->log(sprintf('  攻击 eid=%d 伤害=%d 手持=%s',
+                        $targetEid, $atkDamage,
+                        $heldAttack === null ? '空手' : $heldAttack['id'] . '/' . ($heldAttack['damage'] ?? 0)));
                     if ($this->damageMob($targetEid, $atkDamage, $c)) {
                         $this->addExhaustion($c, 0.3);
                         break;
@@ -2400,6 +2403,8 @@ final class Server
         270 => 2, 274 => 3, 257 => 4, 278 => 5, 285 => 2,
         // 锹
         269 => 2, 273 => 3, 256 => 4, 277 => 5, 284 => 2,
+        // 锄头：1.8 里就是 1 点（和空手一样，它不是武器）
+        290 => 1, 291 => 1, 292 => 1, 293 => 1, 294 => 1,
     ];
 
     /** 工具 id => 最大耐久。挖方块时扣 1，挖穿了就消失。 */
