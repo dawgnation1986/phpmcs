@@ -2987,6 +2987,11 @@ final class Server
      */
     private function giveItem(Connection $c, int $id, int $count, int $damage, array $extra = []): void
     {
+        // 探针：谁在给物品、给的是什么（用来抓「附魔被重建」的现场）
+        $bt = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 3);
+        $this->log(sprintf('  [giveItem] %d x%d 来自 %s%s',
+            $id, $count, $bt[1]['function'] ?? '?',
+            $extra === [] ? '' : ' extra=' . json_encode($extra)));
         $slots = array_merge(range(36, 44), range(9, 35));
 
         foreach ($slots as $slot) {
