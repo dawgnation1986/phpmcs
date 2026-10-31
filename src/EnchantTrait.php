@@ -123,14 +123,18 @@ trait EnchantTrait
                 $this->enchants[$k]['ids'] = [$ench, $ench, $ench];
             }
         }
-        // 属性 0~2 = 附魔 id，4~6 = 等级消耗
+        // 反编译 xs：g=消耗 发在属性 0~2，h=附魔 发在属性 4~6，
+        // 而且 h 是打包的：id | (等级 << 8)。之前两者写反了，
+        // 客户端把「消耗 5」当成「附魔 id 5」→ 显示水下呼吸。
         foreach ([0, 1, 2] as $i => $idx) {
             $c->send(self::C_WINDOW_PROPERTY, (new Writer())
-                ->byte(1)->short($idx)->short($this->enchants[$k]['ids'][$i]));
+                ->byte(1)->short($idx)->short($this->enchants[$k]['costs'][$i]));
         }
         foreach ([0, 1, 2] as $i => $idx) {
+            $id = $this->enchants[$k]['ids'][$i];
+            $packed = $id < 0 ? 0 : ($id | (($i + 1) << 8));
             $c->send(self::C_WINDOW_PROPERTY, (new Writer())
-                ->byte(1)->short(4 + $idx)->short($this->enchants[$k]['costs'][$i]));
+                ->byte(1)->short(4 + $idx)->short($packed));
         }
     }
 
