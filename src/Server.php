@@ -69,6 +69,9 @@ final class Connection
     /** 上次重发挂载包的时刻 */
     public float $rideSyncAt = 0.0;
 
+    /** 上次移动的时刻（用来判断玩家是不是站着不动） */
+    public float $lastMoveAt = 0.0;
+
     /** 经验：等级 / 当前级进度(0~1) / 总经验 */
     public int $xpLevel = 0;
     public float $xpProgress = 0.0;
@@ -2363,6 +2366,7 @@ final class Server
 
         // 跑动和跳跃的饱食度消耗（原版：跑 0.1/格，跳 0.05，冲刺跳 0.2）
         if ($moved) {
+            $c->lastMoveAt = microtime(true);
             $dist = sqrt(
                 ($c->x - $c->lastX) ** 2 + ($c->z - $c->lastZ) ** 2
             );
@@ -4674,7 +4678,12 @@ final class Server
             // 这样既能防止客户端自己下船，又不会产生拖拽感。
             $bs = $this->spawnedEntities[$rp->riding];
             $dd = sqrt(($bs['x'] - $rp->x) ** 2 + ($bs['z'] - $rp->z) ** 2);
-            if ($dd > 2.5) {
+            if ($dd > 1.0) {
+                continue;
+            }
+            // 只在玩家站定时重发：这时船就在脚下，挂载不会把玩家拽动。
+            // 走动中不重发（那才是「拉回」的来源），停下来再挂。
+            if ($now - $rp->lastMoveAt < 1.0) {
                 continue;
             }
             if ($now - $rp->rideSyncAt < 1.0) {
