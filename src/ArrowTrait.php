@@ -186,11 +186,15 @@ trait ArrowTrait
             }
 
             $this->arrows[$eid] = [$x, $y, $z, $vx, $vy, $vz, $owner, $this->arrows[$eid][7]];
+            // 朝向必须按速度算，否则箭一直水平飞，看起来像「没有重力」
+            $horiz = sqrt($vx * $vx + $vz * $vz);
+            $yawDeg = rad2deg(atan2(-$vx, $vz));
+            $pitchDeg = rad2deg(atan2(-$vy, $horiz));
             foreach ($this->players() as $p) {
                 $p->send(self::C_ENTITY_TELEPORT, (new Writer())
                     ->varInt($eid)
                     ->int((int) ($x * 32))->int((int) ($y * 32))->int((int) ($z * 32))
-                    ->byte(0)->byte(0)->bool(false));
+                    ->byte(self::angle($yawDeg))->byte(self::angle($pitchDeg))->bool(false));
             }
         }
     }
