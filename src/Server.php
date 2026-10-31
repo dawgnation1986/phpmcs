@@ -1653,7 +1653,36 @@ final class Server
                     if ($itemId < 0) {
                         unset($c->inventory[$slot]);
                     } else {
-                        $c->inventory[$slot] = ['id' => $itemId, 'count' => $count, 'damage' => $damage];
+                        // 这里以前只存 id/count/damage，NBT 被丢掉 ——
+                        // 创造模式拖一件附魔装备，附魔就没了（日志里 0x10 连续刷屏就是它）。
+                        $item = ['id' => $itemId, 'count' => $count, 'damage' => $damage];
+                        if ($r->remaining() > 0) {
+                            $flag = $r->readUnsignedByte();
+                            if ($flag === 1 && $r->remaining() > 0) {
+                                try {
+                                    $tag = Nbt::parse($r->rest());
+                                    $enchTag = $tag->value['ench'] ?? null;
+                                    if ($enchTag !== null) {
+                                        $lst = is_array($enchTag->value) ? ($enchTag->value['items'] ?? []) : [];
+                                        $en = [];
+                                        foreach ($lst as $e) {
+                                            if (isset($e->value['id'], $e->value['lvl'])) {
+                                                $en[] = [
+                                                    'id' => (int) $e->value['id']->value,
+                                                    'lvl' => (int) $e->value['lvl']->value,
+                                                ];
+                                            }
+                                        }
+                                        if ($en !== []) {
+                                            $item['ench'] = $en;
+                                        }
+                                    }
+                                } catch (\Throwable $e) {
+                                    // NBT 坏了就当没有，不影响这次放置
+                                }
+                            }
+                        }
+                        $c->inventory[$slot] = $item;
                     }
                     // 必须回一个 Set Slot，不然客户端刚拿到手又把方块收回去
                     $c->send(self::C_SET_SLOT, (new Writer())
@@ -4258,6 +4287,19 @@ final class Server
      * $c->cursor 和当前槽位重新算，否则「拿起来」会被当成「放回去」，
      * 客户端就会看到东西变双份。
      */
+    /** 这个物品能不能放进这个盔甲槽（5 头 6 胸 7 腿 8 靴） */
+    private static function armorFits(int $slot, int $itemId): bool
+    {
+        $map = [
+            5 => [298, 302, 306, 310, 314],
+            6 => [299, 303, 307, 311, 315],
+            7 => [300, 304, 308, 312, 316],
+            8 => [301, 305, 309, 313, 317],
+        ];
+
+        return in_array($itemId, $map[$slot] ?? [], true);
+    }
+
     private function clickInventory(Connection $c, int $slot, int $button, int $mode, ?array $cursor): void
     {
         // 2x2 合成格的 4 个槽位
@@ -4268,7 +4310,8 @@ final class Server
                 if ($it !== null) {
                     $c->craftGrid[$i] = null;
                     $this->sendWindowSlot($c, 0, $slot, null);
-                    $this->giveItem($c, $it['id'], $it['count'], $it['damage']);
+                    $this->giveItem($c, $it['id'], $it['count'], $it['damage'],
+                        empty($it['ench']) ? [] : ['ench' => $it['ench']]);
                     $this->updateCraftOutput($c);
                     $this->sendCursor($c);
                 }
@@ -4295,8 +4338,48 @@ final class Server
             return;
         }
 
+        // 盔甲槽 5~8：以前直接 return，服务端不认，重发背包时又被「脱下来」。
+        // 5 头 / 6 胸 / 7 腿 / 8 靴
+        if ($slot >= 5 && $slot <= 8) {
+            if ($mode === 1) {                 // Shift：脱下来
+                $worn = $c->inventory[$slot] ?? null;
+                if ($worn !== null) {
+                    unset($c->inventory[$slot]);
+                    $this->giveItem($c, $worn['id'], $worn['count'], $worn['damage'],
+                        empty($worn['ench']) ? [] : ['ench' => $worn['ench']]);
+                }
+                $this->sendPlayerInventory($c);
+
+                return;
+            }
+            if ($mode !== 0 || ($button !== 0 && $button !== 1)) {
+                $this->sendCursor($c);
+
+                return;
+            }
+            $cur = $c->inventory[$slot] ?? null;
+            [$next, $newCursor] = self::clickedStacks($cur, $c->cursor, $button);
+            // 只允许对应部位的盔甲放进来
+            if ($next !== null && !self::armorFits($slot, (int) $next['id'])) {
+                $this->sendPlayerInventory($c);
+                $this->sendCursor($c);
+
+                return;
+            }
+            if ($next === null) {
+                unset($c->inventory[$slot]);
+            } else {
+                $c->inventory[$slot] = $next;
+            }
+            $c->cursor = $newCursor;
+            $this->sendPlayerInventory($c);
+            $this->sendCursor($c);
+
+            return;
+        }
+
         if ($slot < 9 || $slot > 44) {
-            $this->sendCursor($c);   // 盔甲格先不管，至少把光标同步回来
+            $this->sendCursor($c);
 
             return;
         }
@@ -4304,7 +4387,44 @@ final class Server
         $cur = $c->inventory[$slot] ?? null;
 
         if ($mode === 1 && $cur !== null) {
-            // Shift+点击背包物品：优先快速填入 2x2 合成格
+            // Shift+点击不再往 2x2 合成格塞东西（用户要求：必须手动放）。
+            // 改成原版的行为：快捷栏 ↔ 背包 互转。
+            $targets = $slot >= 36 ? range(9, 35) : range(36, 44);
+            foreach ($targets as $tSlot) {
+                $dst = $c->inventory[$tSlot] ?? null;
+                $max = self::maxStack((int) $cur['id']);
+                if ($dst === null) {
+                    $c->inventory[$tSlot] = $cur;
+                    unset($c->inventory[$slot]);
+                    $this->sendPlayerInventory($c);
+
+                    return;
+                }
+                if ((int) $dst['id'] === (int) $cur['id']
+                    && (int) ($dst['damage'] ?? 0) === (int) ($cur['damage'] ?? 0)
+                    && empty($dst['ench']) && empty($cur['ench'])
+                    && (int) $dst['count'] < $max) {
+                    $space = $max - (int) $dst['count'];
+                    $move = min($space, (int) $cur['count']);
+                    $c->inventory[$tSlot]['count'] = (int) $dst['count'] + $move;
+                    $left = (int) $cur['count'] - $move;
+                    if ($left <= 0) {
+                        unset($c->inventory[$slot]);
+                    } else {
+                        $c->inventory[$slot] = self::withCount($cur, $left);
+                    }
+                    $this->sendPlayerInventory($c);
+
+                    return;
+                }
+            }
+            $this->sendPlayerInventory($c);
+
+            return;
+        }
+
+        if ($mode === 1 && $cur !== null) {
+            // 旧逻辑（保留在下面但不会走到，防止误删）：
             $moved = $this->quickFillGrid($c, 0, $cur);
             if ($moved > 0) {
                 $left = $cur['count'] - $moved;
