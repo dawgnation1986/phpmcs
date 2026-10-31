@@ -63,6 +63,9 @@ final class Connection
     /** 最近收到的包 id（定位附魔丢失时看上下文） */
     public array $pktLog = [];
 
+    /** 正在乘坐的载具 eid（0 = 没坐） */
+    public int $riding = 0;
+
     /** 经验：等级 / 当前级进度(0~1) / 总经验 */
     public int $xpLevel = 0;
     public float $xpProgress = 0.0;
@@ -189,6 +192,8 @@ final class Server
     private const C_ENTITY_STATUS = 0x1A;
     /** S->C Spawn Experience Orb：eid + x/y/z(*32) + 经验值(short) */
     private const C_SPAWN_XP_ORB = 0x11;
+    /** S->C Attach Entity：乘坐的实体 id + 载具 id（-1 = 下来）+ 拴绳字节 */
+    private const C_ATTACH_ENTITY = 0x1B;
     private const C_ENTITY_MOVE = 0x15;
     /** S->C Set Experience：进度(float) + 等级(varint) + 总经验(varint) */
     private const C_SET_EXPERIENCE = 0x1F;      // 相对移动（客户端插值，看着顺）
@@ -950,6 +955,11 @@ final class Server
     private function spawnBoat(float $px, float $py, float $pz, float $yaw): void
     {
         $eid = $this->nextEntityId++;
+        // 登记进实体表：既能持久化，右键时也能认出「这是船」
+        $this->spawnedEntities[$eid] = [
+            'type' => 1, 'x' => $px, 'y' => $py, 'z' => $pz, 'data' => 0,
+        ];
+        $this->saveEntities();
         foreach ($this->players() as $p) {
             $p->send(self::C_SPAWN_OBJECT, (new Writer())
                 ->varInt($eid)
@@ -1653,6 +1663,20 @@ final class Server
             case 0x02: // Use Entity（攻击 / 交互）
                 $targetEid = $r->readVarInt();
                 $action = $r->readByte();
+                if ($action === 0 || $action === 2) {   // 交互 / 对着某点交互
+                    $target = $this->spawnedEntities[$targetEid] ?? null;
+                    if (is_array($target) && (int) $target['type'] === 1) {
+                        // 上船：Attach Entity（玩家 eid + 载具 eid）
+                        $c->riding = $targetEid;
+                        foreach ($this->players() as $pp) {
+                            $pp->send(self::C_ATTACH_ENTITY, (new Writer())
+                                ->int($c->entityId)->int($targetEid)->byte(0));
+                        }
+                        $this->log("  {$c->username} 上船 eid={$targetEid}");
+                        break;
+                    }
+                    break;
+                }
                 if ($action === 1) {          // 1 = 攻击
                     // 打盔甲架：销毁 + 掉一个架
                     if (isset($this->armorStands[$targetEid])) {
@@ -1820,6 +1844,18 @@ final class Server
                 }
                 $this->log(sprintf('  告示牌 %d,%d,%d 写入: %s', $sgnX, $sgnY, $sgnZ,
                     implode(' | ', array_map(fn($v) => mb_substr($v, 0, 20), $sgnLines))));
+                break;
+
+            case 0x0B: // Entity Action（潜行/疾跑）
+                $entAction = $r->readUnsignedByte();
+                if ($entAction === 0 && $c->riding > 0) {   // 0 = 开始潜行 → 下船
+                    foreach ($this->players() as $pp) {
+                        $pp->send(self::C_ATTACH_ENTITY, (new Writer())
+                            ->int($c->entityId)->int(-1)->byte(0));
+                    }
+                    $this->log("  {$c->username} 下船 eid={$c->riding}");
+                    $c->riding = 0;
+                }
                 break;
 
             case 0x13: // 客户端报能力（比如开始飞）
@@ -2273,6 +2309,22 @@ final class Server
         if ($yaw !== null) {
             $c->yaw = $yaw;
             $c->pitch = (float) $pitch;
+        }
+
+        // 坐着船：把船挪到玩家位置，并广播传送
+        if ($moved && $c->riding > 0 && isset($this->spawnedEntities[$c->riding])) {
+            $boatEid = $c->riding;
+            $this->spawnedEntities[$boatEid]['x'] = $c->x;
+            $this->spawnedEntities[$boatEid]['y'] = $c->y;
+            $this->spawnedEntities[$boatEid]['z'] = $c->z;
+            foreach ($this->players() as $pv) {
+                $pv->send(self::C_ENTITY_TELEPORT, (new Writer())
+                    ->varInt($boatEid)
+                    ->int((int) ($c->x * 32))
+                    ->int((int) ($c->y * 32))
+                    ->int((int) ($c->z * 32))
+                    ->byte(self::angle($c->yaw))->byte(0)->bool(true));
+            }
         }
 
         // 跑动和跳跃的饱食度消耗（原版：跑 0.1/格，跳 0.05，冲刺跳 0.2）
