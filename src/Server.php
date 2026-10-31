@@ -60,6 +60,9 @@ final class Connection
     /** 附魔看门狗：进服时哪些槽有附魔，之后丢了就报 */
     public array $enchWatch = [];
 
+    /** 最近收到的包 id（定位附魔丢失时看上下文） */
+    public array $pktLog = [];
+
     /** 经验：等级 / 当前级进度(0~1) / 总经验 */
     public int $xpLevel = 0;
     public float $xpProgress = 0.0;
@@ -1076,6 +1079,12 @@ final class Server
 
     private function handlePlay(Connection $c, int $id, Reader $r): void
     {
+        // 记最近 12 个包 id，附魔丢失时能对上「那一刻客户端发了什么」
+        $c->pktLog[] = $id;
+        if (count($c->pktLog) > 12) {
+            array_shift($c->pktLog);
+        }
+
         switch ($id) {
             case 0x00: // Keep Alive 回应
                 $c->keepAliveId = 0;
@@ -3538,17 +3547,6 @@ final class Server
                 $this->log("  {$c->username} /hit -> {$hx},{$hy},{$hz} id={$hid} meta={$hmeta}");
                 break;
 
-            case 'inv':
-                $list = [];
-                foreach ($c->inventory as $slot => $item) {
-                    $list[] = $slot . ':' . $item['id'] . 'x' . $item['count'];
-                }
-                $this->sendChat($c, [
-                    'text' => '服务端记录的背包：' . ($list === [] ? '空' : implode(', ', $list)),
-                    'color' => 'yellow',
-                ], 1);
-                break;
-
             case 'save':
                 $n = $this->world->save();
                 $this->sendChat($c, [
@@ -4461,8 +4459,9 @@ final class Server
                 // 丢了：只要这一格还是同一件物品，就把附魔补回去（自愈）
                 if (is_array($wNow) && (int) $wNow['id'] === (int) $wSnap['id']) {
                     $wp->inventory[$wSlot]['ench'] = $wSnap['ench'];
-                    $this->log(sprintf('  [看门狗] 槽%d 物品 %d 附魔被抹掉，已自动补回 %s',
-                        $wSlot, $wSnap['id'], json_encode($wSnap['ench'])));
+                    $this->log(sprintf('  [看门狗] 槽%d 物品 %d 附魔被抹掉，已自动补回 %s；最近包=[%s]',
+                        $wSlot, $wSnap['id'], json_encode($wSnap['ench']),
+                        implode(',', array_map(static fn ($v) => '0x' . dechex($v), $wp->pktLog))));
                     $this->sendPlayerInventory($wp);
                     continue;
                 }
