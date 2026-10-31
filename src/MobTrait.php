@@ -131,12 +131,19 @@ trait MobTrait
         }
 
         [, , , $drops] = self::MOB_TYPES[$m['type']];
+        // 死亡动画：Entity Status 3 = 死亡（客户端会播放倒地）。
+        // 直接 removeMob 会让它凭空消失，看起来像"被打没了"。
+        foreach ($this->players() as $pp3) {
+            $pp3->send(self::C_ENTITY_STATUS, (new Writer())->int($eid)->byte(3));
+        }
+        $this->mobs[$eid]['dead'] = true;
+        $this->mobs[$eid]['deadAt'] = microtime(true) + 1.0;
         // 击杀经验：敌对 5 点，被动 1~3 点
         $xp = self::MOB_TYPES[$m['type']][1] ? 5 : random_int(1, 3);
         // 1.8 的 Spawn Object 里没有「经验球」这种类型（1 是船、2 是掉落物），
         // 发什么都会画错，所以直接结算给击杀者。
         $this->spawnXpOrb($m['x'], $m['y'] + 0.3, $m['z'], $xp);
-        $this->removeMob($eid);
+        // 不在这里移除：留给 tickMobs 在 1 秒后移除，让倒地动画播完
         // 抢夺（21）：每级额外 0~lvl 个
         $looting = 0;
         $wpn = $attacker->inventory[36 + $attacker->heldSlot] ?? null;
@@ -190,6 +197,14 @@ trait MobTrait
                         }
                     }
                 }
+                // 已经死了：等动画播完（1 秒）再移除，期间不再跑 AI
+                if (!empty($m['dead'])) {
+                    if ($now >= ($m['deadAt'] ?? 0)) {
+                        $this->removeMob($eid);
+                    }
+                    continue;
+                }
+
                 if ($near === null || $bestD > 64.0) {
                     $this->removeMob($eid);
                     continue;
