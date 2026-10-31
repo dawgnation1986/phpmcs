@@ -57,6 +57,7 @@ trait MobTrait
             'type' => $type, 'x' => $x, 'y' => $y, 'z' => $z,
             'hp' => self::MOB_TYPES[$type][2], 'life' => 0.0, 'lastHit' => 0.0,
             'target' => 0, 'angryUntil' => 0.0, 'burnAt' => 0.0,
+            'dirX' => 0.0, 'dirZ' => 0.0, 'dirUntil' => 0.0,
         ];
         foreach ($this->players() as $p) {
             $this->sendMobSpawn($p, $eid, $type, $x, $y, $z);
@@ -267,8 +268,37 @@ trait MobTrait
                         $this->mobs[$eid]['lastHit'] = $now;
                     }
                 } else {
-                    $nx = $m['x'] + random_int(-2, 2) / 10;
-                    $nz = $m['z'] + random_int(-2, 2) / 10;
+                    // 以前每拍都重新随机方向，看起来一卡一卡（来回抖）。
+                    // 现在选一个方向保持 2~4 秒，走不动了再换。
+                    if ($now >= ($m['dirUntil'] ?? 0)) {
+                        $ang = deg2rad(random_int(0, 359));
+                        $this->mobs[$eid]['dirX'] = cos($ang);
+                        $this->mobs[$eid]['dirZ'] = sin($ang);
+                        $this->mobs[$eid]['dirUntil'] = $now + random_int(20, 40) / 10;
+                        // 偶尔原地站一会儿，别一直走
+                        if (random_int(0, 3) === 0) {
+                            $this->mobs[$eid]['dirX'] = 0.0;
+                            $this->mobs[$eid]['dirZ'] = 0.0;
+                            $this->mobs[$eid]['dirUntil'] = $now + random_int(10, 25) / 10;
+                        }
+                    }
+                    $dxs = $this->mobs[$eid]['dirX'];
+                    $dzs = $this->mobs[$eid]['dirZ'];
+                    if ($dxs === 0.0 && $dzs === 0.0) {
+                        $nx = $m['x'];
+                        $nz = $m['z'];
+                    } else {
+                        [$okw, $gyw] = $this->canStand($m['x'] + $dxs * 0.15, $m['z'] + $dzs * 0.15, (int) floor($m['y']));
+                        if (!$okw || $gyw < (int) floor($m['y']) - 1) {
+                            // 撞墙/悬空：立刻换方向
+                            $this->mobs[$eid]['dirUntil'] = 0.0;
+                            $nx = $m['x'];
+                            $nz = $m['z'];
+                        } else {
+                            $nx = $m['x'] + $dxs * 0.15;
+                            $nz = $m['z'] + $dzs * 0.15;
+                        }
+                    }
                 }
 
                 // 别穿墙：目标格得是能站的地方（脚下实、身上空）。
