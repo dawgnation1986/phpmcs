@@ -633,6 +633,24 @@ final class Server
     private function sendChunkTo(Connection $c, int $cx, int $cz): void
     {
         [$mask, $data] = $this->world->chunkPayload($cx, $cz);
+
+        // 防线：按 mask 校验负载长度（每段 4096 方块*2 + 2048 方块光 + 2048 天光 + 末尾 256 生物群系）。
+        // 客户端读多了会直接「connection lost: found N bytes extra」，读少了会越界。
+        // 这里对齐一下，宁可画面差一点也别断线。
+        $secCount = 0;
+        for ($bi = 0; $bi < 16; $bi++) {
+            if (($mask >> $bi) & 1) {
+                $secCount++;
+            }
+        }
+        $expectLen = 256 + 12288 * $secCount;
+        if (strlen($data) !== $expectLen) {
+            $this->log(sprintf('  区块 %d,%d 负载长度异常：%d 应为 %d（mask=%04x）',
+                $cx, $cz, strlen($data), $expectLen, $mask));
+            $data = strlen($data) > $expectLen
+                ? substr($data, 0, $expectLen)
+                : str_pad($data, $expectLen, "\x00");
+        }
         $c->send(self::C_CHUNK_DATA, (new Writer())
             ->int($cx)
             ->int($cz)
