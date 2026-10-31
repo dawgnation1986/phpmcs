@@ -566,7 +566,7 @@ final class Server
         }
         foreach ($c->inventory as $wSlot => $wItem) {
             if (is_array($wItem) && !empty($wItem['ench'])) {
-                $c->enchWatch[$wSlot] = $wItem['id'];
+                $c->enchWatch[$wSlot] = ['id' => $wItem['id'], 'ench' => $wItem['ench']];
             }
         }
         $this->sendPlayerInventory($c);
@@ -4432,13 +4432,22 @@ final class Server
 
         // 附魔看门狗：进服时记下的附魔槽，之后只要没了就立刻记日志
         foreach ($this->players() as $wp) {
-            foreach ($wp->enchWatch as $wSlot => $wId) {
+            foreach ($wp->enchWatch as $wSlot => $wSnap) {
                 $wNow = $wp->inventory[$wSlot] ?? null;
-                if (!is_array($wNow) || empty($wNow['ench'])) {
-                    $this->log(sprintf('  [看门狗] 槽%d 的物品 %d 附魔没了（现在=%s）',
-                        $wSlot, $wId, $wNow === null ? 'null' : json_encode($wNow)));
-                    unset($wp->enchWatch[$wSlot]);
+                if (is_array($wNow) && !empty($wNow['ench'])) {
+                    continue;
                 }
+                // 丢了：只要这一格还是同一件物品，就把附魔补回去（自愈）
+                if (is_array($wNow) && (int) $wNow['id'] === (int) $wSnap['id']) {
+                    $wp->inventory[$wSlot]['ench'] = $wSnap['ench'];
+                    $this->log(sprintf('  [看门狗] 槽%d 物品 %d 附魔被抹掉，已自动补回 %s',
+                        $wSlot, $wSnap['id'], json_encode($wSnap['ench'])));
+                    $this->sendPlayerInventory($wp);
+                    continue;
+                }
+                $this->log(sprintf('  [看门狗] 槽%d 物品 %d 已经不是原来那件了（现在=%s），放弃跟踪',
+                    $wSlot, $wSnap['id'], $wNow === null ? 'null' : json_encode($wNow)));
+                unset($wp->enchWatch[$wSlot]);
             }
         }
 
