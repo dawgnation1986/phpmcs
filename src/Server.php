@@ -3132,6 +3132,14 @@ final class Server
                 $this->sendChat($c, ['text' => '已回到出生点', 'color' => 'green'], 1);
                 break;
 
+            case 'xp':
+                $this->sendChat($c, ['text' => sprintf(
+                    '经验：等级 %d，进度 %.2f，总计 %d 点（模式：%s）',
+                    $c->xpLevel, $c->xpProgress, $c->xpTotal,
+                    $c->gamemode === 1 ? '创造——经验条不显示，用 /gm 0 切生存' : '生存'
+                ), 'color' => 'aqua'], 1);
+                break;
+
             case 'block':
                 if (count($parts) < 3) {
                     $this->sendChat($c, ['text' => '用法：/block x y z', 'color' => 'red'], 1);
