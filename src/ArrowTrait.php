@@ -64,6 +64,7 @@ trait ArrowTrait
             $x, $y, $z,
             $dirX * $speed, $dirY * $speed, $dirZ * $speed,
             $c->entityId,
+            0,                                  // [7] 已推进拍数
         ];
 
         foreach ($this->players() as $p) {
@@ -78,7 +79,10 @@ trait ArrowTrait
                 ->short((int) ($dirY * $speed * 8000))
                 ->short((int) ($dirZ * $speed * 8000)));
         }
-        $this->log(sprintf('  %s 射箭 eid=%d 方向 %.2f,%.2f,%.2f', $c->username, $eid, $dirX, $dirY, $dirZ));
+        $chk = $this->world->chunk(((int) floor($x)) >> 4, ((int) floor($z)) >> 4);
+        $bidNow = $chk->blockState(((int) floor($x)) & 15, (int) floor($y), ((int) floor($z)) & 15) >> 4;
+        $this->log(sprintf('  %s 射箭 eid=%d @ %.2f,%.2f,%.2f 方向 %.2f,%.2f,%.2f 该格方块=%d',
+            $c->username, $eid, $x, $y, $z, $dirX, $dirY, $dirZ, $bidNow));
     }
 
     /** 每拍推进所有箭 */
@@ -91,6 +95,8 @@ trait ArrowTrait
             [$x, $y, $z, $vx, $vy, $vz, $owner] = $a;
             $steps = 4;                       // 每拍分 4 小步，避免穿模
             $hit = false;
+            $this->arrows[$eid][7] = ($a[7] ?? 0) + 1;
+            $noCollide = $this->arrows[$eid][7] <= 2;   // 刚出生的两拍不判碰撞
             for ($i = 0; $i < $steps && !$hit; $i++) {
                 $x += $vx / $steps;
                 $y += $vy / $steps;
@@ -102,7 +108,9 @@ trait ArrowTrait
                 }
                 $chunk = $this->world->chunk(((int) floor($x)) >> 4, ((int) floor($z)) >> 4);
                 $bid = $chunk->blockState(((int) floor($x)) & 15, (int) floor($y), ((int) floor($z)) & 15) >> 4;
-                if ($bid !== 0 && !in_array($bid, [8, 9, 31, 32, 37, 38, 39, 40, 50, 51, 78, 83, 106, 175], true)) {
+                if (!$noCollide && $bid !== 0
+                    && !in_array($bid, [8, 9, 31, 32, 37, 38, 39, 40, 50, 51, 78, 83, 106, 175], true)) {
+                    $this->log("  箭 eid={$eid} 撞到方块 {$bid} @ " . (int) $x . ',' . (int) $y . ',' . (int) $z);
                     $hit = true;
                     break;
                 }
@@ -121,6 +129,7 @@ trait ArrowTrait
                             }
                         }
                         // 弓的伤害：满蓄力约 9 点，这里按固定 6 算
+                        $this->log("  箭 eid={$eid} 命中生物 {$meid}");
                         if ($shooter !== null) {
                             $this->damageMob($meid, 6, $shooter);
                         }
@@ -128,6 +137,11 @@ trait ArrowTrait
                         break;
                     }
                 }
+            }
+
+            if ($this->arrows[$eid][7] <= 3) {
+                $this->log(sprintf('  箭 eid=%d 第%d拍 @ %.2f,%.2f,%.2f 速度 %.2f,%.2f,%.2f',
+                    $eid, $this->arrows[$eid][7], $x, $y, $z, $vx, $vy, $vz));
             }
 
             if ($hit) {
@@ -138,7 +152,7 @@ trait ArrowTrait
                 continue;
             }
 
-            $this->arrows[$eid] = [$x, $y, $z, $vx, $vy, $vz, $owner];
+            $this->arrows[$eid] = [$x, $y, $z, $vx, $vy, $vz, $owner, $this->arrows[$eid][7]];
             foreach ($this->players() as $p) {
                 $p->send(self::C_ENTITY_TELEPORT, (new Writer())
                     ->varInt($eid)
