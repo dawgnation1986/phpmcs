@@ -907,11 +907,14 @@ final class AnvilWorld
 
     public function inventory(string $name): array
     {
-        // 正本优先：playerdata/<uuid>.dat；读不到才退回 JSON 备份
+        // JSON 才是正本（服务端自己读写的那份），playerdata/<uuid>.dat
+        // 只是给外部工具看的副本 —— 它一直没存附魔，之前优先读它，
+        // 导致「存档里有 ench、进服却是白板」。
+        $jsonInv = $this->playerPositions()[strtolower($name)]['inv'] ?? [];
         $dat = $this->readPlayerDat($name);
-        $inv = $dat !== null && $dat['inv'] !== []
-            ? $dat['inv']
-            : ($this->playerPositions()[strtolower($name)]['inv'] ?? []);
+        $inv = $jsonInv !== []
+            ? $jsonInv
+            : ($dat !== null ? $dat['inv'] : []);
         if (!is_array($inv)) {
             return [];
         }
