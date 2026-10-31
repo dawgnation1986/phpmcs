@@ -550,6 +550,7 @@ final class AnvilWorld
                     'id' => (int) ($it->value['id']->value ?? 0),
                     'count' => (int) ($it->value['Count']->value ?? 0),
                     'damage' => (int) ($it->value['Damage']->value ?? 0),
+                    'ench' => $this->readEnch($it),
                 ];
             }
             $this->chests->save($x, $y, $z, $slots);
@@ -588,6 +589,16 @@ final class AnvilWorld
                     'id' => Tag::short((int) $it['id']),
                     'Count' => Tag::byte((int) $it['count']),
                     'Damage' => Tag::short((int) ($it['damage'] ?? 0)),
+                    // 附魔信息放在 tag.ench，不写的话重进就没了
+                    ...(!empty($it['ench']) ? ['tag' => Tag::compound([
+                        'ench' => Tag::list(10, array_map(
+                            static fn (array $e): Tag => Tag::compound([
+                                'id' => Tag::short((int) $e['id']),
+                                'lvl' => Tag::short((int) $e['lvl']),
+                            ]),
+                            $it['ench']
+                        )),
+                    ])] : []),
                 ]);
             }
             $list[] = Tag::compound([
@@ -862,6 +873,7 @@ final class AnvilWorld
                     'id' => $id,
                     'count' => $cnt,
                     'damage' => (int) ($it->value['Damage']->value ?? 0),
+                    'ench' => $this->readEnch($it),
                 ];
             }
         }
@@ -1031,6 +1043,26 @@ final class AnvilWorld
      * 背包的正本还是 .phpmcs_players.json（服务端自己读），
      * 这里只是让目录结构跟原版对齐，外部工具（地图/编辑器）能读到人。
      */
+    /** 从物品 NBT 里读出 ench 列表 */
+    private function readEnch(Tag $item): array
+    {
+        $tag = $item->value['tag'] ?? null;
+        if ($tag === null || !isset($tag->value['ench'])) {
+            return [];
+        }
+        $list = $tag->value['ench'];
+        $items = is_array($list->value) ? ($list->value['items'] ?? []) : [];
+        $out = [];
+        foreach ($items as $e) {
+            if (!isset($e->value['id'], $e->value['lvl'])) {
+                continue;
+            }
+            $out[] = ['id' => (int) $e->value['id']->value, 'lvl' => (int) $e->value['lvl']->value];
+        }
+
+        return $out;
+    }
+
     private function writePlayerDat(string $name, array $rec): void
     {
         $uuid = $this->offlineUuid($name);
