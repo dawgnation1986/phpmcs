@@ -289,11 +289,13 @@ trait MobTrait
                     $ddx = (int) round(($nx - $m['x']) * 32);
                     $ddy = (int) round(($ny - $m['y']) * 32);
                     $ddz = (int) round(($nz - $m['z']) * 32);
+                    // 1.8 的 S15 位移是 **byte**（1/32 格），不是 short。
+                    // 发成 short 会让客户端多读 3 个字节，直接断线（Packet 0x21 found 3 bytes extra）。
                     $small = abs($ddx) < 128 && abs($ddy) < 128 && abs($ddz) < 128;
                     foreach ($this->players() as $p) {
                         if ($small) {
                             $p->send(self::C_ENTITY_MOVE, (new Writer())
-                                ->varInt($eid)->short($ddx)->short($ddy)->short($ddz)->bool(true));
+                                ->varInt($eid)->byte($ddx)->byte($ddy)->byte($ddz)->bool(true));
                         } else {
                             $p->send(self::C_ENTITY_TELEPORT, (new Writer())
                                 ->varInt($eid)
