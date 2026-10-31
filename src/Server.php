@@ -1937,7 +1937,7 @@ final class Server
         // 挖矿经验（原版数值）：煤1 青金石3 钻石4 红石3 绿宝石4 石英1
         $oreXp = [16 => 1, 21 => 3, 56 => 4, 73 => 3, 129 => 4, 153 => 1][$id] ?? 0;
         if ($oreXp > 0) {
-            $this->spawnXpOrb($x + 0.5, $y + 0.3, $z + 0.5, $oreXp);
+            $this->giveExp($c, $oreXp);
         }
         $meta = $state & 0x0F;
         if ($id === 7) {
@@ -3235,6 +3235,10 @@ final class Server
                 break;
 
             case 'xp':
+                // /xp <数量> 加经验（原版写法），不带参数则显示当前值
+                if (isset($parts[1]) && is_numeric($parts[1])) {
+                    $this->giveExp($c, (int) $parts[1]);
+                }
                 $this->sendChat($c, ['text' => sprintf(
                     '经验：等级 %d，进度 %.2f，总计 %d 点（模式：%s）',
                     $c->xpLevel, $c->xpProgress, $c->xpTotal,

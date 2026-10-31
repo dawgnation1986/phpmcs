@@ -132,8 +132,9 @@ trait MobTrait
         [, , , $drops] = self::MOB_TYPES[$m['type']];
         // 击杀经验：敌对 5 点，被动 1~3 点
         $xp = self::MOB_TYPES[$m['type']][1] ? 5 : random_int(1, 3);
-        // 掉经验球，而不是直接塞给玩家 —— 远处击杀也得自己走过去捡
-        $this->spawnXpOrb($m['x'], $m['y'] + 0.3, $m['z'], $xp);
+        // 1.8 的 Spawn Object 里没有「经验球」这种类型（1 是船、2 是掉落物），
+        // 发什么都会画错，所以直接结算给击杀者。
+        $this->giveExp($attacker, $xp);
         $this->removeMob($eid);
         foreach ($drops as [$dropId, $dmin, $dmax]) {
             $n = random_int($dmin, $dmax);
