@@ -2343,9 +2343,11 @@ final class Server
         // 坐着船：把船挪到玩家位置，并广播传送
         if ($moved && $c->riding > 0 && isset($this->spawnedEntities[$c->riding])) {
             $boatEid = $c->riding;
-            // 船浮在水面，不跟着玩家潜水
+            // 水面上：吸附水面；陆地上：**保持原来的 y**，不要跟着玩家的脚往下掉
             $surf = $this->waterSurfaceY((int) floor($c->x), (int) floor($c->z), (int) floor($c->y));
-            $boatY = $surf > 0 ? (float) $surf : $c->y;
+            $boatY = $surf > 0
+                ? (float) $surf
+                : (float) $this->spawnedEntities[$boatEid]['y'];
             $this->spawnedEntities[$boatEid]['x'] = $c->x;
             $this->spawnedEntities[$boatEid]['y'] = $boatY;
             $this->spawnedEntities[$boatEid]['z'] = $c->z;
@@ -4668,7 +4670,16 @@ final class Server
             if ($rp->riding <= 0 || !isset($this->spawnedEntities[$rp->riding])) {
                 continue;
             }
-            if ($now - $rp->rideSyncAt < 1.5) {
+            // 只在船浮在水面时重发；陆地上重发会把玩家往船上一拽（看起来像被拉回）
+            $rsurf = $this->waterSurfaceY(
+                (int) floor($this->spawnedEntities[$rp->riding]['x']),
+                (int) floor($this->spawnedEntities[$rp->riding]['z']),
+                (int) floor($this->spawnedEntities[$rp->riding]['y'])
+            );
+            if ($rsurf <= 0) {
+                continue;
+            }
+            if ($now - $rp->rideSyncAt < 3.0) {
                 continue;
             }
             $rp->rideSyncAt = $now;
