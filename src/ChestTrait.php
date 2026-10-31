@@ -142,7 +142,13 @@ trait ChestTrait
     {
         $size = $c->chest['size'] ?? 27;
         // 探针：任何一次「原来有附魔、写回去没有」都记日志
-        $oldItem = $slot < $size ? ($c->chest['slots'][$slot] ?? null) : ($c->inventory[$slot] ?? null);
+        // 玩家背包格的真实下标要换算，不能直接用窗口槽号
+        if ($slot < $size) {
+            $oldItem = $c->chest['slots'][$slot] ?? null;
+        } else {
+            $invIdx = $slot < $size + 27 ? 9 + ($slot - $size) : 36 + ($slot - $size - 27);
+            $oldItem = $c->inventory[$invIdx] ?? null;
+        }
         if (is_array($oldItem) && !empty($oldItem['ench']) && ($item === null || empty($item['ench']))) {
             $this->log(sprintf('  [探针] 附魔丢失：槽 %d 物品 %d 的附魔被清掉（新值=%s）',
                 $slot, $oldItem['id'], $item === null ? 'null' : json_encode($item)));

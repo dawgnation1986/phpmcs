@@ -2973,7 +2973,11 @@ final class Server
     }
 
     /** 塞进背包：先堆叠，再找空位，每个变化的槽位回一个 Set Slot */
-    private function giveItem(Connection $c, int $id, int $count, int $damage): void
+    /**
+     * 给玩家物品。$extra 用来带附加字段（目前是 ench），
+     * 不带的话合并/新建出来的就是白板 —— 附魔会在这里被抹掉。
+     */
+    private function giveItem(Connection $c, int $id, int $count, int $damage, array $extra = []): void
     {
         $slots = array_merge(range(36, 44), range(9, 35));
 
