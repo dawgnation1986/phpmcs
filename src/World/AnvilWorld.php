@@ -925,11 +925,16 @@ final class AnvilWorld
             if ($s < 0 || $s > 44) {
                 continue;
             }
-            $out[$s] = [
+            $entry = [
                 'id' => (int) $item['id'],
                 'count' => (int) ($item['count'] ?? 1),
                 'damage' => (int) ($item['damage'] ?? 0),
             ];
+            // 附魔必须带回来，否则重进后剑就是白板
+            if (!empty($item['ench'])) {
+                $entry['ench'] = $item['ench'];
+            }
+            $out[$s] = $entry;
         }
 
         return $out;
