@@ -4445,8 +4445,14 @@ final class Server
             }
         }
 
-        // 附魔看门狗：进服时记下的附魔槽，之后只要没了就立刻记日志
+        // 附魔看门狗：每拍先扫描一遍背包，把新附魔的物品纳入跟踪，
+        // 这样「这次游戏里刚附的装备」也能被保护（以前只认进服时的那几件）。
         foreach ($this->players() as $wp) {
+            foreach ($wp->inventory as $scanSlot => $scanItem) {
+                if (is_array($scanItem) && !empty($scanItem['ench'])) {
+                    $wp->enchWatch[$scanSlot] = ['id' => $scanItem['id'], 'ench' => $scanItem['ench']];
+                }
+            }
             foreach ($wp->enchWatch as $wSlot => $wSnap) {
                 $wNow = $wp->inventory[$wSlot] ?? null;
                 if (is_array($wNow) && !empty($wNow['ench'])) {
