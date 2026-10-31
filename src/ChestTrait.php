@@ -63,7 +63,9 @@ trait ChestTrait
         // NBT 必须读出来！以前这里只是 `readUnsignedByte()` 跳过标记位，
         // 客户端带上来的 ench 被直接丢掉 —— 光标上的附魔剑放进背包就成了白板。
         // 1.8 里这个物品栈是点击包的最后一个字段，所以剩下的字节就是 NBT。
-        if ($hasNbt === 1 && $r->remaining() > 0) {
+        // 注意：1.8 这里写的是**标签类型 10**（TAG_Compound），不是 1。
+        // 之前判断 === 1 永远不成立，所以 NBT 一次都没解析过。
+        if ($hasNbt !== 0 && $r->remaining() > 0) {
             try {
                 $tag = Nbt::parse($r->rest());
                 $enchTag = $tag->value['ench'] ?? null;
