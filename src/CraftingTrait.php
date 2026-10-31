@@ -31,7 +31,7 @@ trait CraftingTrait
 
         // 有形状：裁掉空行空列后逐格比
         [$trim, $h, $w] = self::trimGrid($cells, 3, 3);
-        foreach (RecipeTable::SHAPED as [$out, $pat, $keys]) {
+        foreach ([...RecipeTable::SHAPED, ...RecipeTable::SHAPED_EXTRA] as [$out, $pat, $keys]) {
             $ph = count($pat);
             $pw = max(array_map('strlen', $pat));
             if ($ph !== $h || $pw !== $w) {
