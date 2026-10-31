@@ -164,6 +164,7 @@ final class Server
     use BrewingTrait;
     use FarmingTrait;
     use EnchantTrait;
+    use EntityStoreTrait;
     use FluidTrait;
     use RedstoneTrait;
 
@@ -544,6 +545,9 @@ final class Server
         $c->lastY = $c->y;
         $c->lastZ = $c->z;
 
+        // 实体持久化：第一次有人进服时把展示框/盔甲架/画读回来
+        $this->loadEntities();
+
         // 背包：不发这个，重连之后东西就「没了」（客户端从空背包开始）
         $c->inventory = $this->world->inventory($c->username);
 
@@ -920,6 +924,7 @@ final class Server
             $p->send(self::C_SPAWN_OBJECT, $w);
         }
         $this->spawnedEntities[$eid] = ['type' => $type, 'x' => $px, 'y' => $py, 'z' => $pz, 'data' => $data];
+        $this->saveEntities();
         $this->log(sprintf('  生成实体 type=%d eid=%d @ %.1f,%.1f,%.1f data=%d', $type, $eid, $px, $py, $pz, $data));
     }
 
@@ -937,6 +942,7 @@ final class Server
                 ->unsignedByte(0x7F));
         }
         $this->armorStands[$eid] = [$x, $y, $z];
+        $this->saveEntities();
         $this->log(sprintf('  生成盔甲架 eid=%d @ %d,%d,%d', $eid, $x, $y, $z));
     }
 
@@ -1407,6 +1413,7 @@ final class Server
                             ->byte($pd));
                     }
                     $this->paintings[] = [$x, $y, $z, $title, $pd, (float) $c->yaw];
+                    $this->saveEntities();
                     $this->log("  {$c->username} 放画 {$title} @ {$x},{$y},{$z} 朝向 {$pd}");
                     $slot6 = 36 + $c->heldSlot;
                     if (isset($c->inventory[$slot6])) {
@@ -1656,6 +1663,7 @@ final class Server
                                 ->varInt(1)->varInt($targetEid));
                         }
                         $this->spawnDrop($asx, $asy, $asz, 416, 1, 0, $c);
+                        $this->saveEntities();
                         $this->log("  打掉盔甲架 eid={$targetEid}");
                         break;
                     }
