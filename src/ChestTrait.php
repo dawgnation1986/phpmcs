@@ -56,9 +56,39 @@ trait ChestTrait
         }
         $count = $r->readUnsignedByte();
         $damage = $r->readShort();
-        $r->readUnsignedByte();   // NBT 有没有
+        $hasNbt = $r->readUnsignedByte();
 
-        return ['id' => $id, 'count' => $count, 'damage' => $damage];
+        $item = ['id' => $id, 'count' => $count, 'damage' => $damage];
+
+        // NBT 必须读出来！以前这里只是 `readUnsignedByte()` 跳过标记位，
+        // 客户端带上来的 ench 被直接丢掉 —— 光标上的附魔剑放进背包就成了白板。
+        // 1.8 里这个物品栈是点击包的最后一个字段，所以剩下的字节就是 NBT。
+        if ($hasNbt === 1 && $r->remaining() > 0) {
+            try {
+                $tag = Nbt::parse($r->rest());
+                $enchTag = $tag->value['ench'] ?? null;
+                if ($enchTag !== null) {
+                    $list = is_array($enchTag->value) ? ($enchTag->value['items'] ?? []) : [];
+                    $ench = [];
+                    foreach ($list as $e) {
+                        if (!isset($e->value['id'], $e->value['lvl'])) {
+                            continue;
+                        }
+                        $ench[] = [
+                            'id' => (int) $e->value['id']->value,
+                            'lvl' => (int) $e->value['lvl']->value,
+                        ];
+                    }
+                    if ($ench !== []) {
+                        $item['ench'] = $ench;
+                    }
+                }
+            } catch (\Throwable $e) {
+                // NBT 解析失败就当没有，不影响点击本身
+            }
+        }
+
+        return $item;
     }
 
     private function chestIdAt(int $x, int $y, int $z): int
