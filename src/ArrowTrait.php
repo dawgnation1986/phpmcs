@@ -64,7 +64,8 @@ trait ArrowTrait
         $dirY = -sin($pitch);
         $dirZ = cos($yaw) * cos($pitch);
 
-        $speed = 2.6;
+        // 原版满蓄力射程约 60 格，对应初速 1.8 格/拍（之前 2.6 能飞 130 格）
+        $speed = 1.8;
         $x = $c->x - sin($yaw) * 0.8;
         $y = $c->y + 1.62;
         $z = $c->z + cos($yaw) * 0.8;
@@ -130,6 +131,12 @@ trait ArrowTrait
                 $y += $vy / $steps;
                 $z += $vz / $steps;
                 $vy -= 0.05 / $steps;
+                // 空气阻力 0.99/拍（原版 motion *= 0.99）。少了这个，
+                // 箭会一直飞：朝天上打能升 70 格、飞 130 格才落地。
+                $drag = 0.99 ** (1 / $steps);
+                $vx *= $drag;
+                $vy *= $drag;
+                $vz *= $drag;
                 if ($y < 0) {
                     $hit = true;
                     break;
