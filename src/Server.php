@@ -3719,6 +3719,22 @@ final class Server
      *
      * @return array{0:?array,1:?array} [新槽位物品, 新光标物品]
      */
+    /**
+     * 复制一个物品栈并改数量，**保留其它字段**（ench 等）。
+     * 以前这里是手工 new 一个 ['id','count','damage']，
+     * 结果拆分堆叠时把附魔 NBT 丢了 —— 从附魔台拿出来附魔就没了。
+     */
+    private static function withCount(array $it, int $n): ?array
+    {
+        if ($n <= 0) {
+            return null;
+        }
+        $out = $it;
+        $out['count'] = $n;
+
+        return $out;
+    }
+
     private static function clickedStacks(?array $cur, ?array $cursor, int $button): array
     {
         if ($cursor === null) {
@@ -3730,9 +3746,7 @@ final class Server
             }
             $half = (int) ceil($cur['count'] / 2);
             $rest = $cur['count'] - $half;
-            $slot = $rest > 0 ? ['id' => $cur['id'], 'count' => $rest, 'damage' => $cur['damage']] : null;
-
-            return [$slot, ['id' => $cur['id'], 'count' => $half, 'damage' => $cur['damage']]];
+            return [self::withCount($cur, $rest), self::withCount($cur, $half)];
         }
 
         if ($cur === null) {
@@ -3740,8 +3754,8 @@ final class Server
                 return [$cursor, null];              // 放下整堆
             }
             $left = $cursor['count'] - 1;
-            $slot = ['id' => $cursor['id'], 'count' => 1, 'damage' => $cursor['damage']];
-            $hand = $left > 0 ? ['id' => $cursor['id'], 'count' => $left, 'damage' => $cursor['damage']] : null;
+            $slot = self::withCount($cursor, 1);
+            $hand = self::withCount($cursor, $left);
 
             return [$slot, $hand];
         }
