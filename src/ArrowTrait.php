@@ -65,9 +65,9 @@ trait ArrowTrait
         $dirZ = cos($yaw) * cos($pitch);
 
         $speed = 2.6;
-        $x = $c->x - sin($yaw) * 0.3;
-        $y = $c->y + 1.5;
-        $z = $c->z + cos($yaw) * 0.3;
+        $x = $c->x - sin($yaw) * 0.8;
+        $y = $c->y + 1.62;
+        $z = $c->z + cos($yaw) * 0.8;
 
         $eid = $this->nextEntityId++;
         $this->arrows[$eid] = [
@@ -111,6 +111,16 @@ trait ArrowTrait
         $this->lastArrowTick = $now;
         foreach ($this->arrows as $eid => $a) {
             [$x, $y, $z, $vx, $vy, $vz, $owner] = $a;
+            // 插住的箭：不动，5 秒后消失
+            if (isset($a[8]) && $a[8] > 0) {
+                if (microtime(true) >= $a[8]) {
+                    foreach ($this->players() as $p) {
+                        $p->send(self::C_DESTROY_ENTITIES, (new Writer())->varInt(1)->varInt($eid));
+                    }
+                    unset($this->arrows[$eid]);
+                }
+                continue;
+            }
             $steps = 4;                       // 每拍分 4 小步，避免穿模
             $hit = false;
             $this->arrows[$eid][7] = ($a[7] ?? 0) + 1;
@@ -128,8 +138,10 @@ trait ArrowTrait
                 $bid = $chunk->blockState(((int) floor($x)) & 15, (int) floor($y), ((int) floor($z)) & 15) >> 4;
                 if (!$noCollide && $bid !== 0
                     && !in_array($bid, [8, 9, 31, 32, 37, 38, 39, 40, 50, 51, 78, 83, 106, 175], true)) {
-                    $this->log("  箭 eid={$eid} 撞到方块 {$bid} @ " . (int) $x . ',' . (int) $y . ',' . (int) $z);
+                    // 插在方块上停 5 秒（原版行为），顺便让玩家看得到箭
+                    $this->arrows[$eid] = [$x, $y, $z, 0.0, 0.0, 0.0, $owner, $this->arrows[$eid][7], microtime(true) + 5.0];
                     $hit = true;
+                    $stuck = true;
                     break;
                 }
                 // 命中生物
@@ -163,6 +175,9 @@ trait ArrowTrait
             }
 
             if ($hit) {
+                if (!empty($stuck)) {
+                    continue;      // 已经改成插住状态，保留实体
+                }
                 foreach ($this->players() as $p) {
                     $p->send(self::C_DESTROY_ENTITIES, (new Writer())->varInt(1)->varInt($eid));
                 }
