@@ -3280,6 +3280,19 @@ final class Server
                 $this->sendChat($c, ['text' => '已回到出生点', 'color' => 'green'], 1);
                 break;
 
+            case 'inv':
+                // 看服务端背包里到底有什么（含附魔），用来区分「数据丢了」和「没显示」
+                $rows = [];
+                foreach ($c->inventory as $slot => $it) {
+                    if (!is_array($it)) {
+                        continue;
+                    }
+                    $rows[] = $slot . ':' . $it['id']
+                        . (!empty($it['ench']) ? '(附魔' . json_encode($it['ench']) . ')' : '');
+                }
+                $this->sendChat($c, ['text' => $rows === [] ? '背包是空的' : implode(' ', $rows), 'color' => 'aqua'], 1);
+                break;
+
             case 'xp':
                 // /xp <数量> 加经验（原版写法），不带参数则显示当前值
                 if (isset($parts[1]) && is_numeric($parts[1])) {
