@@ -45,7 +45,9 @@ trait EnchantTrait
             ->byte(1)
             ->string('minecraft:enchanting_table')
             ->string(json_encode(['text' => '附魔台'], JSON_UNESCAPED_UNICODE) ?: '{"text":"Enchant"}')
-            ->byte(2));
+            // 附魔台和工作台一样是「有 GUI id 的容器」，slotCount 必须发 0，
+            // 发真实槽位数客户端会当成未知类型、退回箱子界面。
+            ->byte(0));
         $this->sendEnchantWindow($c);
         $this->recalcEnchant($c);
     }
