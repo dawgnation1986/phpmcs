@@ -556,6 +556,22 @@ final class Server
             $this->log('  背包内容 ' . implode(' ', $ids));
         }
         $this->sendPlayerInventory($c);
+        // 读回上次的经验，并推给客户端（否则经验条永远是空的）
+        $this->loadXpStore();
+        $c->xpTotal = (int) ($this->xpStore[strtolower($c->username)] ?? 0);
+        $total0 = $c->xpTotal;
+        $lv0 = 0;
+        if ($total0 < 272) {
+            $lv0 = intdiv($total0, 17);
+        } elseif ($total0 < 272 + 555) {
+            $lv0 = 16 + intdiv($total0 - 272, 37);
+        } else {
+            $lv0 = 31 + intdiv($total0 - (272 + 555), 62);
+        }
+        $c->xpLevel = $lv0;
+        $c->xpProgress = 0.0;
+        $c->send(self::C_SET_EXPERIENCE, (new Writer())
+            ->float($c->xpProgress)->varInt($c->xpLevel)->varInt($c->xpTotal));
         $c->resendInvAt = microtime(true) + 1.0;
 
         // 地上已有的掉落物要重新 Spawn 给这个连接。
@@ -2494,10 +2510,43 @@ final class Server
         ));
     }
 
+    /** @var array 玩家名 => 总经验 */
+    private array $xpStore = [];
+    private bool $xpLoaded = false;
+
+    private function xpFile(): string
+    {
+        return dirname(__DIR__) . DIRECTORY_SEPARATOR . 'cache' . DIRECTORY_SEPARATOR . 'xp.json';
+    }
+
+    private function loadXpStore(): void
+    {
+        if ($this->xpLoaded) {
+            return;
+        }
+        $this->xpLoaded = true;
+        $f = $this->xpFile();
+        if (is_file($f)) {
+            $j = json_decode((string) @file_get_contents($f), true);
+            if (is_array($j)) {
+                $this->xpStore = $j;
+            }
+        }
+    }
+
     /** @var array 经验球 eid => [x,y,z,amount] */
     private array $xpOrbs = [];
 
     /** 生成经验球（实体 type=2）。远处的经验也能走过去捡。 */
+    private function saveXpStore(): void
+    {
+        $dir = dirname($this->xpFile());
+        if (!is_dir($dir)) {
+            @mkdir($dir, 0777, true);
+        }
+        @file_put_contents($this->xpFile(), json_encode($this->xpStore), LOCK_EX);
+    }
+
     private function spawnXpOrb(float $x, float $y, float $z, int $amount): void
     {
         if ($amount <= 0) {
@@ -4084,6 +4133,9 @@ final class Server
             $base = 17 * 16 + 37 * 15 + ($level - 31) * 62;
             $need = 62;
         }
+        $this->loadXpStore();
+        $this->xpStore[strtolower($c->username)] = $total;
+        $this->saveXpStore();
         $c->xpLevel = $level;
         $c->xpProgress = $need > 0 ? min(1.0, ($total - $base) / $need) : 0.0;
         $c->send(self::C_SET_EXPERIENCE, (new Writer())
