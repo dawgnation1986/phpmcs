@@ -39,6 +39,16 @@ trait ArrowTrait
             return;   // 没箭，射不出去（原版也一样）
         }
 
+        // 弓扣 1 点耐久，384 用坏（原版：每射一箭 -1，有耐久附魔另算）
+        $bowSlot = 36 + $c->heldSlot;
+        $bow = $c->inventory[$bowSlot];
+        $bow['damage'] = (int) ($bow['damage'] ?? 0) + 1;
+        if ($bow['damage'] >= 384) {
+            unset($c->inventory[$bowSlot]);
+        } else {
+            $c->inventory[$bowSlot] = $bow;
+        }
+
         $left = (int) $c->inventory[$arrowSlot]['count'] - 1;
         if ($left <= 0) {
             unset($c->inventory[$arrowSlot]);
@@ -86,11 +96,19 @@ trait ArrowTrait
     }
 
     /** 每拍推进所有箭 */
+    private float $lastArrowTick = 0.0;
+
     private function tickArrows(float $now): void
     {
         if ($this->arrows === []) {
             return;
         }
+        // 必须限速！主循环一秒能跑上千次，不限速的话箭在 1 毫秒内就飞完 6 格
+        // 然后销毁，客户端一帧都没画到 —— 这就是「箭看不见」的原因。
+        if ($now - $this->lastArrowTick < 0.05) {
+            return;
+        }
+        $this->lastArrowTick = $now;
         foreach ($this->arrows as $eid => $a) {
             [$x, $y, $z, $vx, $vy, $vz, $owner] = $a;
             $steps = 4;                       // 每拍分 4 小步，避免穿模
