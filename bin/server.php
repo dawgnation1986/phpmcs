@@ -41,6 +41,7 @@ require __DIR__ . '/../src/FarmingTrait.php';
 require __DIR__ . '/../src/FluidTrait.php';
 require __DIR__ . '/../src/RedstoneTrait.php';
 require __DIR__ . '/../src/RecipeTable.php';
+require __DIR__ . '/../src/ItemIds.php';
 require __DIR__ . '/../src/CraftingTrait.php';
 require __DIR__ . '/../src/Skin/Skins.php';
 require __DIR__ . '/../src/Server.php';

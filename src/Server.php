@@ -2307,9 +2307,17 @@ final class Server
         193, 194, 195, 196, 197,
     ];
 
+    /**
+     * 客户端物品注册表里到底有没有这个 id。
+     *
+     * 以前用的是启发式（id<=450 且不在 NO_ITEM 里），那个规则不准：
+     * 1.8 有几十个方块「有方块、没物品」（点亮的熔炉 62、酿造台 117、
+     * 旗帜方块 176/177…），掉出去客户端就 NPE。
+     * 现在直接查从客户端反编译出来的真实注册表（ItemIds::VALID）。
+     */
     private static function hasItem(int $id): bool
     {
-        return $id > 0 && $id <= 450 && !in_array($id, self::NO_ITEM, true);
+        return isset(ItemIds::VALID[$id]);
     }
 
     /** 工具 id => 最大耐久。挖方块时扣 1，挖穿了就消失。 */
