@@ -568,8 +568,19 @@ final class Server
         } else {
             $lv0 = 31 + intdiv($total0 - (272 + 555), 62);
         }
+        // 进度也要按曲线算，不然重进后经验条是空的
+        if ($lv0 <= 16) {
+            $base0 = $lv0 * 17;
+            $need0 = 17;
+        } elseif ($lv0 <= 31) {
+            $base0 = 17 * 16 + ($lv0 - 16) * 37;
+            $need0 = 37;
+        } else {
+            $base0 = 17 * 16 + 37 * 15 + ($lv0 - 31) * 62;
+            $need0 = 62;
+        }
         $c->xpLevel = $lv0;
-        $c->xpProgress = 0.0;
+        $c->xpProgress = $need0 > 0 ? min(1.0, ($total0 - $base0) / $need0) : 0.0;
         $c->send(self::C_SET_EXPERIENCE, (new Writer())
             ->float($c->xpProgress)->varInt($c->xpLevel)->varInt($c->xpTotal));
         $c->resendInvAt = microtime(true) + 1.0;
@@ -2557,7 +2568,7 @@ final class Server
         foreach ($this->players() as $p) {
             $p->send(self::C_SPAWN_OBJECT, (new Writer())
                 ->varInt($eid)
-                ->byte(2)
+                ->byte(1)          // 1 = 经验球（2 是掉落物！）
                 ->int((int) ($x * 32))->int((int) ($y * 32))->int((int) ($z * 32))
                 ->byte(0)->byte(0)
                 ->int(0));
