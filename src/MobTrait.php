@@ -178,7 +178,21 @@ trait MobTrait
                     $nz = $m['z'] + random_int(-3, 3) / 10;
                 }
 
+                // 别穿墙：目标格得是能站的地方（脚下实、身上空）。
+                // 以前直接 groundY 传送，生物会从墙里穿过去。
                 if (abs($nx - $m['x']) > 0.001 || abs($nz - $m['z']) > 0.001) {
+                    $probe = $this->world->chunk(((int) floor($nx)) >> 4, ((int) floor($nz)) >> 4);
+                    $bx2 = ((int) floor($nx)) & 15;
+                    $bz2 = ((int) floor($nz)) & 15;
+                    $by2 = (int) floor($m['y']);
+                    $feet = $probe->blockState($bx2, $by2, $bz2) >> 4;
+                    $head = $probe->blockState($bx2, $by2 + 1, $bz2) >> 4;
+                    $walkable = static fn (int $id): bool => $id === 0 || in_array($id, [31, 32, 37, 38, 39, 40, 50, 51, 59, 78, 83, 106, 111, 175], true);
+                    if (!$walkable($feet) || !$walkable($head)) {
+                        // 撞墙：往侧面挪一点，做出「绕一下」的观感
+                        $nx = $m['x'] + ($dz ?? 0) * 0.15;
+                        $nz = $m['z'] - ($dx ?? 0) * 0.15;
+                    }
                     $ny = $this->groundY((int) floor($nx), (int) floor($nz), (int) $m['y'] + 1);
                     if ($ny <= 0) {
                         $ny = $m['y'];
@@ -216,6 +230,12 @@ trait MobTrait
 
     private function tryNaturalSpawn(Connection $p): void
     {
+        // 数量上限：每人 10 只，最多 40。以前没有上限，夜里一会儿就刷一片。
+        $players = max(1, count($this->players()));
+        if (count($this->mobs) >= min(40, 10 * $players)) {
+            return;
+        }
+
         $x = (int) floor($p->x) + random_int(-16, 16);
         $z = (int) floor($p->z) + random_int(-16, 16);
         if (abs($x - $p->x) < 4 && abs($z - $p->z) < 4) {
@@ -241,7 +261,36 @@ trait MobTrait
             return;
         }
         $type = $types[random_int(0, count($types) - 1)];
+
+        // 光照门槛（原版规则）：
+        //   敌对 需要亮度 <= 7 —— 所以火把周围、白天露天都不刷
+        //   被动 需要亮度 >= 9
+        $light = $this->lightAt($x, $y, $z);
+        $hostile = in_array($type, self::MOB_HOSTILE, true);
+        if ($hostile && $light > 7) {
+            return;
+        }
+        if (!$hostile && $light < 9) {
+            return;
+        }
+
         $this->spawnMob($type, $x + 0.5, (float) $y, $z + 0.5);
+    }
+
+    /**
+     * 该位置的实际亮度（取方块光和天光的大者）。
+     * 夜里天光要减 11 —— 原版就是这么算的，所以夜里露天亮度是 4，会刷怪。
+     */
+    private function lightAt(int $x, int $y, int $z): int
+    {
+        $chunk = $this->world->chunk($x >> 4, $z >> 4);
+        $block = $chunk->blockLight($x & 15, $y, $z & 15);
+        $sky = $chunk->skyLight($x & 15, $y, $z & 15);
+        if ($sky > 0 && $this->isNight()) {
+            $sky = max(0, $sky - 11);
+        }
+
+        return max($block, $sky);
     }
 
     private function groundY(int $x, int $z, int $startY): int

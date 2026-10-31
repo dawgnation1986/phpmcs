@@ -397,6 +397,37 @@ final class Chunk
     }
 
     /** 返回 (blockId << 4) | meta */
+    /** 方块光（火把、岩浆等） */
+    public function blockLight(int $x, int $y, int $z): int
+    {
+        return $this->nibbleLight('BlockLight', $x, $y, $z);
+    }
+
+    /** 天光（0~15，露天的格子是 15） */
+    public function skyLight(int $x, int $y, int $z): int
+    {
+        return $this->nibbleLight('SkyLight', $x, $y, $z);
+    }
+
+    private function nibbleLight(string $key, int $x, int $y, int $z): int
+    {
+        if ($y < 0 || $y > 255) {
+            return 0;
+        }
+        $sec = $this->sectionFor($y >> 4);
+        if ($sec === null) {
+            return 0;
+        }
+        $arr = Nbt::bytes($sec, $key);
+        if ($arr === null || strlen($arr) < 2048) {
+            return 0;
+        }
+        $i = (($y & 15) << 8) | ($z << 4) | $x;
+        $b = ord($arr[$i >> 1]);
+
+        return ($i & 1) === 0 ? ($b & 15) : (($b >> 4) & 15);
+    }
+
     public function blockState(int $x, int $y, int $z): int
     {
         if ($y < 0 || $y > 255) {
