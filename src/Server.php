@@ -2327,8 +2327,9 @@ final class Server
     {
         // 作物：方块 id 和物品 id 不同，而且要看 meta（age）决定掉什么
         if ($id === 59) {
-            // 小麦：成熟掉小麦，没成熟掉种子；成熟的种子由 extraDrops 补
-            return $meta >= 7 ? [296, 1] : [295, 1];
+            // 成熟掉 2~3 个小麦（种子在 extraDrops 里补 1~3）；
+            // 没熟只掉 1 个种子。
+            return $meta >= 7 ? [296, 2 + random_int(0, 1)] : [295, 1];
         }
         if ($id === 115) {
             // 地狱疣：成熟 2~4 个，没成熟 1 个
@@ -2398,13 +2399,8 @@ final class Server
     private static function extraDrops(int $id, int $meta): array
     {
         if ($id === 59 && $meta >= 7) {
-            // 原版：for i in 0..2，nextInt(15) <= i 时掉一个种子
-            $seeds = 0;
-            for ($i = 0; $i < 3; $i++) {
-                if (random_int(0, 14) <= $i) {
-                    $seeds++;
-                }
-            }
+            // 保底 1 个、最多 3 个种子
+            $seeds = 1 + random_int(0, 2);
 
             return $seeds > 0 ? [[295, $seeds]] : [];
         }
