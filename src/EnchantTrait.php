@@ -228,31 +228,35 @@ trait EnchantTrait
         if ($item === null || $enchId < 0 || $cost <= 0) {
             return;
         }
-        if ($c->xpLevel < $cost) {
-            $this->sendChat($c, ['text' => '等级不够，需要 ' . $cost . ' 级', 'color' => 'red'], 1);
-
-            return;
-        }
         $lapisNeed = $button + 1;
-        if ($lapis === null || (int) $lapis['count'] < $lapisNeed) {
-            $this->sendChat($c, ['text' => '青金石不够，需要 ' . $lapisNeed . ' 个', 'color' => 'red'], 1);
 
-            return;
+        // 创造模式：不消耗经验、也不要青金石（原版创造就是这样）
+        if ($c->gamemode !== 1) {
+            if ($c->xpLevel < $cost) {
+                $this->sendChat($c, ['text' => '等级不够，需要 ' . $cost . ' 级', 'color' => 'red'], 1);
+
+                return;
+            }
+            if ($lapis === null || (int) $lapis['count'] < $lapisNeed) {
+                $this->sendChat($c, ['text' => '青金石不够，需要 ' . $lapisNeed . ' 个', 'color' => 'red'], 1);
+
+                return;
+            }
+
+            // 扣等级（总经验按曲线倒推）
+            $c->xpTotal = max(0, $c->xpTotal - $this->xpForLevels($cost));
+            $c->xpLevel = max(0, $c->xpLevel - $cost);
+            $c->xpProgress = 0.0;
+            $this->loadXpStore();
+            $this->xpStore[strtolower($c->username)] = $c->xpTotal;
+            $this->saveXpStore();
+            $c->send(self::C_SET_EXPERIENCE, (new Writer())
+                ->float($c->xpProgress)->varInt($c->xpLevel)->varInt($c->xpTotal));
+
+            // 扣青金石
+            $lapis['count'] = (int) $lapis['count'] - $lapisNeed;
+            $this->enchants[$k]['slots'][1] = (int) $lapis['count'] > 0 ? $lapis : null;
         }
-
-        // 扣等级（总经验按曲线倒推）
-        $c->xpTotal = max(0, $c->xpTotal - $this->xpForLevels($cost));
-        $c->xpLevel = max(0, $c->xpLevel - $cost);
-        $c->xpProgress = 0.0;
-        $this->loadXpStore();
-        $this->xpStore[strtolower($c->username)] = $c->xpTotal;
-        $this->saveXpStore();
-        $c->send(self::C_SET_EXPERIENCE, (new Writer())
-            ->float($c->xpProgress)->varInt($c->xpLevel)->varInt($c->xpTotal));
-
-        // 扣青金石
-        $lapis['count'] = (int) $lapis['count'] - $lapisNeed;
-        $this->enchants[$k]['slots'][1] = (int) $lapis['count'] > 0 ? $lapis : null;
 
         // 写附魔 NBT：ench 列表 + RepairCost
         $lvl = $button + 1;
