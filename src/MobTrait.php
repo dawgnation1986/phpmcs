@@ -136,8 +136,19 @@ trait MobTrait
         // 发什么都会画错，所以直接结算给击杀者。
         $this->spawnXpOrb($m['x'], $m['y'] + 0.3, $m['z'], $xp);
         $this->removeMob($eid);
+        // 抢夺（21）：每级额外 0~lvl 个
+        $looting = 0;
+        $wpn = $attacker->inventory[36 + $attacker->heldSlot] ?? null;
+        if (is_array($wpn) && !empty($wpn['ench'])) {
+            foreach ($wpn['ench'] as $le) {
+                if ((int) $le['id'] === 21) {
+                    $looting = (int) $le['lvl'];
+                    break;
+                }
+            }
+        }
         foreach ($drops as [$dropId, $dmin, $dmax]) {
-            $n = random_int($dmin, $dmax);
+            $n = random_int($dmin, $dmax) + ($looting > 0 ? random_int(0, $looting) : 0);
             for ($i = 0; $i < $n; $i++) {
                 $this->spawnDrop((int) floor($m['x']), (int) floor($m['y']), (int) floor($m['z']), $dropId, 1, 0, $attacker);
             }

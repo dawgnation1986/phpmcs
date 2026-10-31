@@ -2154,6 +2154,21 @@ final class Server
         }
 
         [$dropId, $count] = self::dropOf($id, $meta);
+
+        // 时运（35）：矿石类掉落数量 ×(1 + random(0..lvl))
+        if ($count > 0 && in_array($id, [16, 21, 56, 73, 129, 153], true)) {
+            $held = $c->inventory[36 + $c->heldSlot] ?? null;
+            if (is_array($held) && !empty($held['ench'])) {
+                foreach ($held['ench'] as $fe) {
+                    if ((int) $fe['id'] === 35) {
+                        $flv = (int) $fe['lvl'];
+                        $count *= 1 + random_int(0, $flv);
+                        break;
+                    }
+                }
+            }
+        }
+
         if ($dropId > 0 && $count > 0) {
             $this->spawnDrop($x, $y, $z, $dropId, $count, $dropId === $id ? $meta : 0, $c);
         }
@@ -4345,6 +4360,23 @@ final class Server
     {
         if ($dmg <= 0 || $c->gamemode === 1) {
             return;
+        }
+        // 保护附魔（0 保护 / 1 火焰保护 / 3 爆炸保护 / 4 弹射物保护）：
+        // 1.8 每级减 4%，四件叠加，最多减 80%
+        $protLv = 0;
+        for ($ar = 5; $ar <= 8; $ar++) {
+            $arItem = $c->inventory[$ar] ?? null;
+            if (!is_array($arItem) || empty($arItem['ench'])) {
+                continue;
+            }
+            foreach ($arItem['ench'] as $ae) {
+                if (in_array((int) $ae['id'], [0, 1, 3, 4], true)) {
+                    $protLv += (int) $ae['lvl'];
+                }
+            }
+        }
+        if ($protLv > 0) {
+            $dmg = max(1, (int) round($dmg * (1 - min(0.8, $protLv * 0.04))));
         }
         $c->health = max(0.0, $c->health - $dmg);
         $this->addExhaustion($c, 0.3);   // 原版：每次受伤 0.3
