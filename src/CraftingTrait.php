@@ -516,7 +516,12 @@ trait CraftingTrait
     {
         foreach ($c->craftGrid as $i => $it) {
             if ($it !== null) {
-                $this->giveItem($c, $it['id'], $it['count'], $it['damage']);
+                // 合成格里的东西也要保住附魔（如果玩家把附魔装备放进去过）
+                $extra = [];
+                if (!empty($it['ench'])) {
+                    $extra['ench'] = $it['ench'];
+                }
+                $this->giveItem($c, $it['id'], $it['count'], $it['damage'], $extra);
                 $c->craftGrid[$i] = null;
             }
         }

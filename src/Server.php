@@ -3009,7 +3009,7 @@ final class Server
             if (isset($c->inventory[$slot])) {
                 continue;
             }
-            $it = ['id' => $id, 'count' => min(self::maxStack($id), $count), 'damage' => $damage];
+            $it = ['id' => $id, 'count' => min(self::maxStack($id), $count), 'damage' => $damage] + $extra;
             $c->inventory[$slot] = $it;
             $count -= $it['count'];
             $this->sendInventorySlot($c, $slot, $it);
@@ -3713,7 +3713,13 @@ final class Server
         if ($c->cursor === null) {
             return;
         }
-        $this->giveItem($c, $c->cursor['id'], $c->cursor['count'], $c->cursor['damage']);
+        // 必须把 ench 一起传下去 —— 这里以前只传三个字段，
+        // 玩家拿着附魔剑按 E 关背包（走 0x0D → returnCursor），附魔就被重置了。
+        $extra = [];
+        if (!empty($c->cursor['ench'])) {
+            $extra['ench'] = $c->cursor['ench'];
+        }
+        $this->giveItem($c, $c->cursor['id'], $c->cursor['count'], $c->cursor['damage'], $extra);
         $c->cursor = null;
         $this->sendCursor($c);
     }
