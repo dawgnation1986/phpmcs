@@ -54,6 +54,9 @@ final class Connection
     /** 正在打开的酿造台 ['x','y','z','cursor'] */
     public ?array $brewing = null;
 
+    /** 正在打开的附魔台 ['x','y','z'] */
+    public ?array $enchantTable = null;
+
     /** 经验：等级 / 当前级进度(0~1) / 总经验 */
     public int $xpLevel = 0;
     public float $xpProgress = 0.0;
@@ -154,6 +157,7 @@ final class Server
     use BannerTrait;
     use BrewingTrait;
     use FarmingTrait;
+    use EnchantTrait;
     use FluidTrait;
     use RedstoneTrait;
 
@@ -1173,6 +1177,11 @@ final class Server
                 }
                 // 床：晚上右键直接睡到天亮（不模拟躺下动画，最省事也最稳）
                 // 末影箱：每个玩家一份 27 格，跨箱子共享
+                if ($hitId === 116) {
+                    $this->openEnchantTable($c, $x, $y, $z);
+                    break;
+                }
+
                 if ($hitId === 117) {
                     $this->openBrewingStand($c, $x, $y, $z);
                     break;
@@ -1708,6 +1717,8 @@ final class Server
                     }
                 } elseif ($windowId === 0) {
                     $this->clickInventory($c, $slot, $button, $mode, $cursor);
+                } elseif ($c->enchantTable !== null && $windowId === 1) {
+                    $this->clickEnchant($c, $slot, $button, $mode, $cursor);
                 } elseif ($c->brewing !== null && $windowId === 5) {
                     $this->clickBrewing($c, $slot, $button, $mode, $cursor);
                 } elseif ($c->furnace !== null && ($windowId === 1 || $windowId === 2 || $windowId === 3)) {
@@ -1769,6 +1780,11 @@ final class Server
             case 0x13: // 客户端报能力（比如开始飞）
                 $flags = $r->readUnsignedByte();
                 $c->flying = ($flags & 0x02) !== 0;
+                break;
+
+            case 0x11: // Enchant Item：窗口 id + 按钮序号
+                $r->readByte();
+                $this->doEnchant($c, $r->readByte());
                 break;
 
             case 0x15: // Client Settings

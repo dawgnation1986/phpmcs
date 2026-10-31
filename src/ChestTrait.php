@@ -3,6 +3,9 @@ declare(strict_types=1);
 
 namespace PhpMc;
 
+use PhpMc\Nbt\Nbt;
+use PhpMc\Nbt\Tag;
+
 /**
  * 箱子：开窗、窗口物品、点击、关闭时存盘。
  *
@@ -21,10 +24,26 @@ trait ChestTrait
             return pack('n', 0xFFFF);   // short -1 = 空槽
         }
 
+        // 附魔过的物品要带 NBT，否则客户端不显示紫色的附魔名
+        $nbt = "\x00";
+        if (!empty($item['ench'])) {
+            $list = [];
+            foreach ($item['ench'] as $e) {
+                $list[] = Tag::compound([
+                    'id' => Tag::short((int) $e['id']),
+                    'lvl' => Tag::short((int) $e['lvl']),
+                ]);
+            }
+            $nbt = chr(10) . Nbt::write(Tag::compound([
+                'ench' => Tag::list(10, $list),
+                'RepairCost' => Tag::int(1),
+            ]));
+        }
+
         return pack('n', $item['id'] & 0xFFFF)
             . chr($item['count'] & 0xFF)
             . pack('n', $item['damage'] & 0xFFFF)
-            . "\x00";
+            . $nbt;
     }
 
     private function readSlotItem(Reader $r): ?array

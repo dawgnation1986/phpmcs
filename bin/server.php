@@ -38,6 +38,7 @@ require __DIR__ . '/../src/SpawnerTrait.php';
 require __DIR__ . '/../src/BannerTrait.php';
 require __DIR__ . '/../src/BrewingTrait.php';
 require __DIR__ . '/../src/FarmingTrait.php';
+require __DIR__ . '/../src/EnchantTrait.php';
 require __DIR__ . '/../src/FluidTrait.php';
 require __DIR__ . '/../src/RedstoneTrait.php';
 require __DIR__ . '/../src/RecipeTable.php';
