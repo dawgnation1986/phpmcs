@@ -35,27 +35,30 @@ trait ArrowTrait
                 break;
             }
         }
-        if ($arrowSlot === null) {
-            return;   // 没箭，射不出去（原版也一样）
+        if ($arrowSlot === null && $c->gamemode !== 1) {
+            return;   // 生存没箭射不出去；创造不用箭
         }
 
-        // 弓扣 1 点耐久，384 用坏（原版：每射一箭 -1，有耐久附魔另算）
-        $bowSlot = 36 + $c->heldSlot;
-        $bow = $c->inventory[$bowSlot];
-        $bow['damage'] = (int) ($bow['damage'] ?? 0) + 1;
-        if ($bow['damage'] >= 384) {
-            unset($c->inventory[$bowSlot]);
-        } else {
-            $c->inventory[$bowSlot] = $bow;
-        }
+        // 创造模式：不耗耐久、不耗箭（原版行为）
+        if ($c->gamemode !== 1) {
+            // 弓扣 1 点耐久，384 用坏（有耐久附魔另算，暂未实现）
+            $bowSlot = 36 + $c->heldSlot;
+            $bow = $c->inventory[$bowSlot];
+            $bow['damage'] = (int) ($bow['damage'] ?? 0) + 1;
+            if ($bow['damage'] >= 384) {
+                unset($c->inventory[$bowSlot]);
+            } else {
+                $c->inventory[$bowSlot] = $bow;
+            }
 
-        $left = (int) $c->inventory[$arrowSlot]['count'] - 1;
-        if ($left <= 0) {
-            unset($c->inventory[$arrowSlot]);
-        } else {
-            $c->inventory[$arrowSlot]['count'] = $left;
+            $left = (int) $c->inventory[$arrowSlot]['count'] - 1;
+            if ($left <= 0) {
+                unset($c->inventory[$arrowSlot]);
+            } else {
+                $c->inventory[$arrowSlot]['count'] = $left;
+            }
+            $this->sendPlayerInventory($c);
         }
-        $this->sendPlayerInventory($c);
 
         // 从眼睛高度、朝视线方向射出
         $yaw = deg2rad($c->yaw);
