@@ -4232,6 +4232,15 @@ final class Server
 
     private function sendPlayerInventory(Connection $c): void
     {
+        // 探针：确认「发给客户端的背包里确实带附魔」
+        foreach ($c->inventory as $probeSlot => $probeItem) {
+            if (is_array($probeItem) && !empty($probeItem['ench'])) {
+                $this->log(sprintf('  [探针] 下发附魔物品 槽%d=%d %s',
+                    $probeSlot, $probeItem['id'], json_encode($probeItem['ench'])));
+                break;
+            }
+        }
+
         $w = (new Writer())->byte(0)->short(45);
         // 0 输出，1-4 2x2 合成格，5-8 盔甲，9-44 背包
         $w->raw($this->slotBytes(self::matchCraft2x2($c->craftGrid)));

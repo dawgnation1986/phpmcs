@@ -141,6 +141,12 @@ trait ChestTrait
     private function setWindowSlot(Connection $c, int $slot, ?array $item): void
     {
         $size = $c->chest['size'] ?? 27;
+        // 探针：任何一次「原来有附魔、写回去没有」都记日志
+        $oldItem = $slot < $size ? ($c->chest['slots'][$slot] ?? null) : ($c->inventory[$slot] ?? null);
+        if (is_array($oldItem) && !empty($oldItem['ench']) && ($item === null || empty($item['ench']))) {
+            $this->log(sprintf('  [探针] 附魔丢失：槽 %d 物品 %d 的附魔被清掉（新值=%s）',
+                $slot, $oldItem['id'], $item === null ? 'null' : json_encode($item)));
+        }
         if ($slot < $size) {
             $c->chest['slots'][$slot] = $item;
             // 末影箱：这是唯一的槽位写入点，改完立刻落盘。
