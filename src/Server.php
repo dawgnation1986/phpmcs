@@ -4681,6 +4681,20 @@ final class Server
                 continue;
             }
             $rp->rideSyncAt = $now;
+
+            // 关键：先把船对齐到玩家当前位置，再发挂载包。
+            // 不然船还停在上一帧的位置，挂载会把玩家往回拽一下（就是那个「拉回」）。
+            $bsurf = $this->waterSurfaceY((int) floor($rp->x), (int) floor($rp->z), (int) floor($rp->y));
+            $by = $bsurf > 0 ? (float) $bsurf : (float) $bs['y'];
+            $this->spawnedEntities[$rp->riding]['x'] = $rp->x;
+            $this->spawnedEntities[$rp->riding]['y'] = $by;
+            $this->spawnedEntities[$rp->riding]['z'] = $rp->z;
+            foreach ($this->players() as $rv) {
+                $rv->send(self::C_ENTITY_TELEPORT, (new Writer())
+                    ->varInt($rp->riding)
+                    ->int((int) ($rp->x * 32))->int((int) ($by * 32))->int((int) ($rp->z * 32))
+                    ->byte(self::angle($rp->yaw))->byte(0)->bool(true));
+            }
             foreach ($this->players() as $rv) {
                 $rv->send(self::C_ATTACH_ENTITY, (new Writer())
                     ->int($rp->entityId)->int($rp->riding)->byte(0));
