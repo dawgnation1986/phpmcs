@@ -952,8 +952,34 @@ final class Server
     }
 
     /** 生成一艘船（实体，不是方块）。type=1，data=0 不带速度。 */
+    /**
+     * 从 fromY 往下找最上面一格水，返回它上面那层的 y（船应该浮在这里）。
+     * 找不到水就返回 0，调用方保持原样。
+     */
+    private function waterSurfaceY(int $x, int $z, int $fromY): int
+    {
+        $chunk = $this->world->chunk($x >> 4, $z >> 4);
+        for ($y = min(255, $fromY + 3); $y > 0; $y--) {
+            $id = $chunk->blockState($x & 15, $y, $z & 15) >> 4;
+            if ($id === 8 || $id === 9) {
+                return $y + 1;
+            }
+            // 连着 4 格都不是水/空气，就别往下找了（避免掉进洞里）
+            if ($id !== 0 && $id !== 8 && $id !== 9 && $y < $fromY - 4) {
+                break;
+            }
+        }
+
+        return 0;
+    }
+
     private function spawnBoat(float $px, float $py, float $pz, float $yaw): void
     {
+        // 放在水面上，而不是方块顶
+        $surface = $this->waterSurfaceY((int) floor($px), (int) floor($pz), (int) floor($py));
+        if ($surface > 0) {
+            $py = (float) $surface;
+        }
         $eid = $this->nextEntityId++;
         // 登记进实体表：既能持久化，右键时也能认出「这是船」
         $this->spawnedEntities[$eid] = [
@@ -2314,14 +2340,17 @@ final class Server
         // 坐着船：把船挪到玩家位置，并广播传送
         if ($moved && $c->riding > 0 && isset($this->spawnedEntities[$c->riding])) {
             $boatEid = $c->riding;
+            // 船浮在水面，不跟着玩家潜水
+            $surf = $this->waterSurfaceY((int) floor($c->x), (int) floor($c->z), (int) floor($c->y));
+            $boatY = $surf > 0 ? (float) $surf : $c->y;
             $this->spawnedEntities[$boatEid]['x'] = $c->x;
-            $this->spawnedEntities[$boatEid]['y'] = $c->y;
+            $this->spawnedEntities[$boatEid]['y'] = $boatY;
             $this->spawnedEntities[$boatEid]['z'] = $c->z;
             foreach ($this->players() as $pv) {
                 $pv->send(self::C_ENTITY_TELEPORT, (new Writer())
                     ->varInt($boatEid)
                     ->int((int) ($c->x * 32))
-                    ->int((int) ($c->y * 32))
+                    ->int((int) ($boatY * 32))
                     ->int((int) ($c->z * 32))
                     ->byte(self::angle($c->yaw))->byte(0)->bool(true));
             }
@@ -4581,6 +4610,17 @@ final class Server
                 foreach ($this->spawnedEntities as $eid2 => $ent2) {
                     if (abs($ent2['x'] - $ep->x) > 48 || abs($ent2['z'] - $ep->z) > 48) {
                         continue;
+                    }
+                    // 船：每次重发前重新吸附水面。被水流推到新的格子后，
+                    // 原来存的 y 可能已经在水下甚至方块里，客户端就不画了。
+                    if ((int) $ent2['type'] === 1) {
+                        $snapY = $this->waterSurfaceY(
+                            (int) floor($ent2['x']), (int) floor($ent2['z']), (int) floor($ent2['y'])
+                        );
+                        if ($snapY > 0) {
+                            $this->spawnedEntities[$eid2]['y'] = (float) $snapY;
+                            $ent2['y'] = (float) $snapY;
+                        }
                     }
                     $w2 = (new Writer())
                         ->varInt((int) $eid2)
