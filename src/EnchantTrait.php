@@ -119,8 +119,23 @@ trait EnchantTrait
                 $this->enchants[$k]['ids'] = [-1, -1, -1];
             } else {
                 // 三档：等级 1 / 2 / 3，消耗递增
+                // 三档各自随机抽一个（原版也是分档随机）
+                $ids = [];
+                $kind = $this->enchantKind($id);
+                for ($q = 0; $q < 3; $q++) {
+                    $pick = $this->enchantFor($id);
+                    if ((self::ENCH_MAX[$pick] ?? 1) < $q + 1) {
+                        foreach ((self::ENCH_POOL[$kind] ?? []) as $cand) {
+                            if ((self::ENCH_MAX[$cand] ?? 1) >= $q + 1) {
+                                $pick = $cand;
+                                break;
+                            }
+                        }
+                    }
+                    $ids[] = $pick;
+                }
                 $this->enchants[$k]['costs'] = [5, 15, 30];
-                $this->enchants[$k]['ids'] = [$ench, $ench, $ench];
+                $this->enchants[$k]['ids'] = $ids;
             }
         }
         // 反编译 xs：g=消耗 发在属性 0~2，h=附魔 发在属性 4~6，
@@ -138,33 +153,66 @@ trait EnchantTrait
         }
     }
 
-    /** 这件物品能被附什么（简化：按类型给一个固定附魔） */
+    /** 附魔最大等级（1.8） */
+    private const ENCH_MAX = [
+        0 => 4, 1 => 4, 3 => 4, 4 => 4, 5 => 3, 6 => 1, 7 => 3, 8 => 2,
+        16 => 5, 17 => 5, 18 => 5, 19 => 2, 20 => 2, 21 => 3,
+        32 => 5, 33 => 1, 34 => 3, 35 => 3,
+        48 => 5, 49 => 2, 50 => 1, 51 => 1,
+    ];
+
+    /** 每类物品允许的附魔（1.8 可用列表） */
+    private const ENCH_POOL = [
+        'sword'  => [16, 17, 18, 19, 20, 21, 34],
+        'pick'   => [32, 33, 35, 34],
+        'shovel' => [32, 33, 34],
+        'axe'    => [32, 34, 35],
+        'bow'    => [48, 49, 50, 34],
+        'helmet' => [0, 1, 3, 4, 5, 6, 34],
+        'chest'  => [0, 1, 3, 4, 34],
+        'legs'   => [0, 1, 3, 4, 34],
+        'boots'  => [0, 1, 3, 4, 7, 8, 34],
+    ];
+
+    /** 物品 → 类别（空串表示不可附魔） */
+    private function enchantKind(int $itemId): string
+    {
+        if (in_array($itemId, [267, 268, 272, 276, 283], true)) {
+            return 'sword';
+        }
+        if (in_array($itemId, [257, 270, 274, 278, 285], true)) {
+            return 'pick';
+        }
+        if (in_array($itemId, [256, 269, 273, 277, 284], true)) {
+            return 'shovel';
+        }
+        if (in_array($itemId, [258, 271, 275, 279, 286], true)) {
+            return 'axe';
+        }
+        if ($itemId === 261) {
+            return 'bow';
+        }
+        $armor = [
+            298 => 'helmet', 299 => 'chest', 300 => 'legs', 301 => 'boots',
+            302 => 'helmet', 303 => 'chest', 304 => 'legs', 305 => 'boots',
+            306 => 'helmet', 307 => 'chest', 308 => 'legs', 309 => 'boots',
+            310 => 'helmet', 311 => 'chest', 312 => 'legs', 313 => 'boots',
+            314 => 'helmet', 315 => 'chest', 316 => 'legs', 317 => 'boots',
+        ];
+
+        return $armor[$itemId] ?? '';
+    }
+
+    /** 这件物品能被附什么（从可用表里随机抽，-1 = 不可附魔） */
     private function enchantFor(int $itemId): int
     {
-        // 剑
-        if (in_array($itemId, [267, 268, 272, 276, 283], true)) {
-            return 16;   // 锋利
+        $kind = $this->enchantKind($itemId);
+        if ($kind === '') {
+            return -1;
         }
-        // 镐/锹/斧
-        if (in_array($itemId, [
-            256, 257, 258, 269, 270, 271, 273, 274, 275, 277, 278, 279, 284, 285, 286,
-        ], true)) {
-            return 32;   // 效率
-        }
-        // 弓
-        if ($itemId === 261) {
-            return 48;   // 力量
-        }
-        // 盔甲四件套
-        if (in_array($itemId, [
-            298, 299, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309,
-            310, 311, 312, 313, 314, 315, 316, 317,
-        ], true)) {
-            return 0;    // 保护
-        }
+        $pool = self::ENCH_POOL[$kind] ?? [];
 
-        return -1;
-    }
+        return $pool === [] ? -1 : $pool[random_int(0, count($pool) - 1)];    }
 
     private function clickEnchant(Connection $c, int $slot, int $button, int $mode, ?array $cursor): void
     {
@@ -280,8 +328,15 @@ trait EnchantTrait
         }
 
         // 写附魔 NBT：ench 列表 + RepairCost
-        $lvl = $button + 1;
-        $item['ench'] = [['id' => $enchId, 'lvl' => $lvl]];
+        $lvl = min($button + 1, self::ENCH_MAX[$enchId] ?? 3);
+        $list = [];
+        foreach ($item['ench'] ?? [] as $e) {
+            if ((int) $e['id'] !== $enchId) {
+                $list[] = $e;
+            }
+        }
+        $list[] = ['id' => $enchId, 'lvl' => $lvl];
+        $item['ench'] = $list;
         $this->enchants[$k]['slots'][0] = $item;
 
         $this->log(sprintf('  %s 附魔 %s（%s %d 级，消耗 %d 级）',

@@ -1675,6 +1675,21 @@ final class Server
                     $atkDamage = $heldAttack === null
                         ? 1
                         : (self::WEAPON_DAMAGE[(int) $heldAttack['id']] ?? 1);
+                    // 附魔加成：锋利每级 +1.25，亡灵杀手/节肢杀手对特定生物 +2.5
+                    if ($heldAttack !== null && !empty($heldAttack['ench'])) {
+                        $mobType = $this->mobs[$targetEid]['type'] ?? 0;
+                        foreach ($heldAttack['ench'] as $ench) {
+                            $eid2 = (int) $ench['id'];
+                            $elv = (int) $ench['lvl'];
+                            if ($eid2 === 16) {
+                                $atkDamage += (int) round($elv * 1.25);
+                            } elseif ($eid2 === 17 && in_array($mobType, [54, 51, 57], true)) {
+                                $atkDamage += (int) round($elv * 2.5);
+                            } elseif ($eid2 === 18 && $mobType === 52) {
+                                $atkDamage += (int) round($elv * 2.5);
+                            }
+                        }
+                    }
                     $this->log(sprintf('  攻击 eid=%d 伤害=%d 手持=%s',
                         $targetEid, $atkDamage,
                         $heldAttack === null ? '空手' : $heldAttack['id'] . '/' . ($heldAttack['damage'] ?? 0)));
