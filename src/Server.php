@@ -1654,7 +1654,11 @@ final class Server
                         break;
                     }
                     // 先看是不是打到了生物
-                    if ($this->damageMob($targetEid, 1, $c)) {
+                    $heldAttack = $c->inventory[36 + $c->heldSlot] ?? null;
+                    $atkDamage = $heldAttack === null
+                        ? 1
+                        : (self::WEAPON_DAMAGE[(int) $heldAttack['id']] ?? 1);
+                    if ($this->damageMob($targetEid, $atkDamage, $c)) {
                         $this->addExhaustion($c, 0.3);
                         break;
                     }
@@ -2382,6 +2386,21 @@ final class Server
     {
         return isset(ItemIds::VALID[$id]);
     }
+
+    /**
+     * 武器/工具的攻击伤害（1.8 数值，空手 = 1）。
+     * 1.8 还没有攻击速度，伤害是固定的。
+     */
+    private const WEAPON_DAMAGE = [
+        // 剑
+        268 => 4, 272 => 5, 267 => 6, 276 => 7, 283 => 4,
+        // 斧
+        271 => 3, 275 => 4, 258 => 5, 279 => 6, 286 => 3,
+        // 镐
+        270 => 2, 274 => 3, 257 => 4, 278 => 5, 285 => 2,
+        // 锹
+        269 => 2, 273 => 3, 256 => 4, 277 => 5, 284 => 2,
+    ];
 
     /** 工具 id => 最大耐久。挖方块时扣 1，挖穿了就消失。 */
     private const TOOL_MAX = [
