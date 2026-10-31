@@ -319,6 +319,10 @@ trait FurnaceTrait
             }
         } else {
             [$next, $newCursor] = self::clickedStacks($current, $c->cursor, $button);
+            // 从产物格取走东西时给烧炼经验（原版每个 0.1~1 点，这里每个 1 点）
+            if ($s === 2 && $current !== null && $next === null) {
+                $this->giveExp($c, 1);
+            }
             $c->cursor = $newCursor;
             $put($slot, $next);
         }

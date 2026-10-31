@@ -130,6 +130,11 @@ trait MobTrait
         }
 
         [, , , $drops] = self::MOB_TYPES[$m['type']];
+        // 击杀经验：敌对 5 点，被动 1~3 点
+        $xp = self::MOB_TYPES[$m['type']][1] ? 5 : random_int(1, 3);
+        if ($attacker->state === Connection::STATE_PLAY) {
+            $this->giveExp($attacker, $xp);
+        }
         $this->removeMob($eid);
         foreach ($drops as [$dropId, $dmin, $dmax]) {
             $n = random_int($dmin, $dmax);

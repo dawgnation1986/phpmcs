@@ -29,10 +29,18 @@ trait FarmingTrait
         115 => 3,   // 地狱疣
     ];
 
+    /** 会自己长的方块（登记/注销/重进补登记都用这一张表） */
+    private const GROW_BLOCKS = [59, 141, 142, 115, 83, 104, 105, 127];
+
+    private function isGrowable(int $id): bool
+    {
+        return in_array($id, self::GROW_BLOCKS, true);
+    }
+
     private function registerCrop(int $x, int $y, int $z, int $id, int $age): void
     {
         // 除了四种作物，还有甘蔗(83)、南瓜茎(104)/西瓜茎(105)、可可豆(127)
-        if (!isset(self::CROP_MAX_AGE[$id]) && !in_array($id, [83, 104, 105, 127], true)) {
+        if (!$this->isGrowable($id)) {
             return;
         }
         $this->crops[$x . ',' . $y . ',' . $z] = ['id' => $id, 'age' => $age];

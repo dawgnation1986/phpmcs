@@ -54,6 +54,11 @@ final class Connection
     /** 正在打开的酿造台 ['x','y','z','cursor'] */
     public ?array $brewing = null;
 
+    /** 经验：等级 / 当前级进度(0~1) / 总经验 */
+    public int $xpLevel = 0;
+    public float $xpProgress = 0.0;
+    public int $xpTotal = 0;
+
     /** 末影箱重试 [时刻, x, y, z] */
     public array $enderRetries = [];
     /** @var array<int,array{id:int,count:int,damage:int}|null> 玩家 2x2 合成格 */
@@ -171,7 +176,9 @@ final class Server
     private const C_SPAWN_PAINTING = 0x29;   // gs 在客户端的注册顺序是第 42 个 → 41 = 0x29
     private const C_TIME_UPDATE = 0x03;
     private const C_ENTITY_STATUS = 0x1A;
-    private const C_ENTITY_MOVE = 0x15;      // 相对移动（客户端插值，看着顺）
+    private const C_ENTITY_MOVE = 0x15;
+    /** S->C Set Experience：进度(float) + 等级(varint) + 总经验(varint) */
+    private const C_SET_EXPERIENCE = 0x1F;      // 相对移动（客户端插值，看着顺）
     private const C_ENTITY_LOOK = 0x16;
     private const C_ENTITY_TELEPORT = 0x18;
     private const C_HEAD_LOOK = 0x19;
@@ -675,7 +682,7 @@ final class Server
         }
 
         // 作物：把这一块里的作物登记进生长表
-        foreach (self::CROP_MAX_AGE as $cid => $_) {
+        foreach (self::GROW_BLOCKS as $cid) {
             foreach ($chunk->blockPositions($cid) as [$cx2, $cy2, $cz2]) {
                 $age2 = $chunk->blockState($cx2 & 15, $cy2, $cz2 & 15) & 15;
                 $this->registerCrop($cx2, $cy2, $cz2, $cid, $age2);
@@ -1803,7 +1810,7 @@ final class Server
         }
     
         // 作物：登记进生长表
-        if (isset(self::CROP_MAX_AGE[$id])) {
+        if ($this->isGrowable($id)) {
             $this->registerCrop($x, $y, $z, $id, $meta);
         }
 
@@ -1881,6 +1888,12 @@ final class Server
             return;
         }
         $id = $state >> 4;
+
+        // 挖矿经验（原版数值）：煤1 青金石3 钻石4 红石3 绿宝石4 石英1
+        $oreXp = [16 => 1, 21 => 3, 56 => 4, 73 => 3, 129 => 4, 153 => 1][$id] ?? 0;
+        if ($oreXp > 0) {
+            $this->giveExp($c, $oreXp);
+        }
         $meta = $state & 0x0F;
         if ($id === 7) {
             return; // 基岩挖不动
@@ -1923,7 +1936,7 @@ final class Server
             }
         }
 
-        if (isset(self::CROP_MAX_AGE[$id])) {
+        if ($this->isGrowable($id)) {
             $this->unregisterCrop($x, $y, $z);
         }
 
@@ -3972,6 +3985,43 @@ final class Server
     }
 
     /** 把 45 格背包推给客户端（windowId 0 = 玩家自己的背包） */
+    /**
+     * 加经验。1.8 的等级曲线：0-15 级每级 17 点，16-30 每级 37 点，之后每级 62 点。
+     * 直接按总经验换算等级，不用维护「当前级攒了多少」。
+     */
+    private function giveExp(Connection $c, int $amount): void
+    {
+        if ($amount <= 0) {
+            return;
+        }
+        $c->xpTotal += $amount;
+        $total = $c->xpTotal;
+        $level = 0;
+        $need = 0;
+        if ($total < 17 * 16) {
+            $level = intdiv($total, 17);
+        } elseif ($total < 17 * 16 + 37 * 15) {
+            $level = 16 + intdiv($total - 17 * 16, 37);
+        } else {
+            $level = 31 + intdiv($total - (17 * 16 + 37 * 15), 62);
+        }
+        $base = 0;
+        if ($level <= 16) {
+            $base = $level * 17;
+            $need = 17;
+        } elseif ($level <= 31) {
+            $base = 17 * 16 + ($level - 16) * 37;
+            $need = 37;
+        } else {
+            $base = 17 * 16 + 37 * 15 + ($level - 31) * 62;
+            $need = 62;
+        }
+        $c->xpLevel = $level;
+        $c->xpProgress = $need > 0 ? min(1.0, ($total - $base) / $need) : 0.0;
+        $c->send(self::C_SET_EXPERIENCE, (new Writer())
+            ->float($c->xpProgress)->varInt($c->xpLevel)->varInt($c->xpTotal));
+    }
+
     private function sendPlayerInventory(Connection $c): void
     {
         $w = (new Writer())->byte(0)->short(45);
