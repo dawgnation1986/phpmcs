@@ -1658,7 +1658,7 @@ final class Server
                         $item = ['id' => $itemId, 'count' => $count, 'damage' => $damage];
                         if ($r->remaining() > 0) {
                             $flag = $r->readUnsignedByte();
-                            if ($flag === 1 && $r->remaining() > 0) {
+                            if ($flag !== 0 && $r->remaining() > 0) {
                                 try {
                                     $tag = Nbt::parse($r->rest());
                                     $enchTag = $tag->value['ench'] ?? null;
@@ -2162,6 +2162,9 @@ final class Server
             // 而 176/177 没有物品形态，玩家捡起来客户端就崩（item=null 的 ItemStack）。
             $bcol = $this->banners[$x . ',' . $y . ',' . $z] ?? 0;
             $this->removeBanner($x, $y, $z);
+            // 必须真的把方块换成空气！之前只掉了物品就 return，
+            // 方块还留在世界里，于是一个旗帜能被无限次破坏、无限掉东西。
+            $this->changeBlock($x, $y, $z, 0, 0);
             $this->spawnDrop($x, $y, $z, 425, 1, (int) $bcol, $c);
 
             return;
