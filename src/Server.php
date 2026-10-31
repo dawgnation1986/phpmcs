@@ -174,6 +174,7 @@ final class Server
     use FarmingTrait;
     use EnchantTrait;
     use EntityStoreTrait;
+    use ArrowTrait;
     use FluidTrait;
     use RedstoneTrait;
 
@@ -1184,6 +1185,11 @@ final class Server
                 if ($status === 3 || $status === 4) {
                     // Q 和 Ctrl+Q 在 1.8 里也是这个包，坐标是 0,0,0
                     $this->dropFromSlot($c, 36 + $c->heldSlot, $status === 3);
+                    break;
+                }
+                if ($status === 5) {
+                    // 松开手中的「使用中物品」—— 拉弓松手就是这一条
+                    $this->shootArrow($c);
                     break;
                 }
                 $state = ($y >= 0 && $y <= 255)
@@ -4736,6 +4742,7 @@ final class Server
 
         $this->processDrops();
         $this->tickXpOrbs();
+        $this->tickArrows($now);
         $this->tickFluids($now);
         $this->tickFurnaces($now);
         $this->tickBrewing($now);
