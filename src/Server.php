@@ -4670,16 +4670,14 @@ final class Server
             if ($rp->riding <= 0 || !isset($this->spawnedEntities[$rp->riding])) {
                 continue;
             }
-            // 只在船浮在水面时重发；陆地上重发会把玩家往船上一拽（看起来像被拉回）
-            $rsurf = $this->waterSurfaceY(
-                (int) floor($this->spawnedEntities[$rp->riding]['x']),
-                (int) floor($this->spawnedEntities[$rp->riding]['z']),
-                (int) floor($this->spawnedEntities[$rp->riding]['y'])
-            );
-            if ($rsurf <= 0) {
+            // 重发挂载的条件：船离玩家足够近（不会把玩家拽回去），
+            // 这样既能防止客户端自己下船，又不会产生拖拽感。
+            $bs = $this->spawnedEntities[$rp->riding];
+            $dd = sqrt(($bs['x'] - $rp->x) ** 2 + ($bs['z'] - $rp->z) ** 2);
+            if ($dd > 2.5) {
                 continue;
             }
-            if ($now - $rp->rideSyncAt < 3.0) {
+            if ($now - $rp->rideSyncAt < 1.0) {
                 continue;
             }
             $rp->rideSyncAt = $now;
