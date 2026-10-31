@@ -1755,6 +1755,7 @@ final class Server
 
             case 0x0D: // Close Window
                 $windowId = $r->readByte();
+                $snapBefore = json_encode($c->inventory[40] ?? null);
                 $this->resetDrag($c);
                 if ($windowId === 3) {
                     $this->closeFurnace($c);
@@ -1766,6 +1767,10 @@ final class Server
                 }
                 $this->returnCursor($c);
                 $this->sendPlayerInventory($c);
+                $snapAfter = json_encode($c->inventory[40] ?? null);
+                if ($snapBefore !== $snapAfter) {
+                    $this->log("  [0x0D] 关窗口 {$windowId} 把槽40 改成了：{$snapBefore} -> {$snapAfter}");
+                }
                 break;
 
             case 0x12: // Update Sign（客户端编辑完告示牌）
