@@ -57,6 +57,9 @@ final class Connection
     /** 正在打开的附魔台 ['x','y','z'] */
     public ?array $enchantTable = null;
 
+    /** 附魔看门狗：进服时哪些槽有附魔，之后丢了就报 */
+    public array $enchWatch = [];
+
     /** 经验：等级 / 当前级进度(0~1) / 总经验 */
     public int $xpLevel = 0;
     public float $xpProgress = 0.0;
@@ -560,6 +563,11 @@ final class Server
         }
         if ($ids !== []) {
             $this->log('  背包内容 ' . implode(' ', $ids));
+        }
+        foreach ($c->inventory as $wSlot => $wItem) {
+            if (is_array($wItem) && !empty($wItem['ench'])) {
+                $c->enchWatch[$wSlot] = $wItem['id'];
+            }
         }
         $this->sendPlayerInventory($c);
         // 读回上次的经验，并推给客户端（否则经验条永远是空的）
@@ -4403,6 +4411,18 @@ final class Server
                 $c->keepAliveId = random_int(1, 0x7FFFFFFF);
                 $c->keepAliveSentAt = $now;
                 $c->send(self::C_KEEP_ALIVE, (new Writer())->varInt($c->keepAliveId));
+            }
+        }
+
+        // 附魔看门狗：进服时记下的附魔槽，之后只要没了就立刻记日志
+        foreach ($this->players() as $wp) {
+            foreach ($wp->enchWatch as $wSlot => $wId) {
+                $wNow = $wp->inventory[$wSlot] ?? null;
+                if (!is_array($wNow) || empty($wNow['ench'])) {
+                    $this->log(sprintf('  [看门狗] 槽%d 的物品 %d 附魔没了（现在=%s）',
+                        $wSlot, $wId, $wNow === null ? 'null' : json_encode($wNow)));
+                    unset($wp->enchWatch[$wSlot]);
+                }
             }
         }
 
