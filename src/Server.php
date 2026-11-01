@@ -2070,6 +2070,14 @@ final class Server
             $this->unregisterCrop($x, $y, $z);
         }
 
+        // 往水里塞方块（或挖掉水）：让周围的水重新算自己该不该留。
+        // 注意这跟之前删掉的 recedeAround 不是一回事 —— 这里只排队让每一格
+        // 自己重算，不做半径扫描，不会误伤整片水。
+        if ($existing !== 0 && in_array($existing >> 4, [8, 9, 10, 11], true)
+            && !in_array($id, [8, 9, 10, 11], true)) {
+            $this->notifyFluidNeighbors($x, $y, $z, ($existing >> 4) >= 10 ? 1 : 0);
+        }
+
         // 【P0 已停用】往水里塞方块时原本会调 recedeAround()，它会扫半径 8
         // 把「判断为孤立」的水整片删掉 —— 填一格方块就能让整条河干掉。
         // 原版的液体是靠自己的计划刻逐个方块重算的，不是区域清理。

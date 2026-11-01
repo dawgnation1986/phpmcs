@@ -141,6 +141,13 @@ trait FluidTrait
             return false;
         }
 
+        // meta 0 的流动水等于源级：只负责往外扩，不参与降级
+        if ($meta === 0) {
+            $this->spreadFrom($x, $y, $z, $kind, 0);
+
+            return false;
+        }
+
         $want = $this->computeLevel($x, $y, $z, $kind, $meta);
 
         if ($want === null) {
@@ -168,6 +175,13 @@ trait FluidTrait
         $source = $this->fluidSourceId($kind);
         $flowing = $this->fluidFlowingId($kind);
         $reach = self::FLUID_REACH[$kind];
+
+        // 水桶放下来的流动水就是 meta 0（源级）。原版里 flowing_water 的 0 级
+        // 等价于水源，不参与降级判断 —— 少了这条，放下去的水会立刻被当成
+        // 「没有来源」删掉（就是你看到的「倒出水，方块马上消失」）。
+        if ($current === 0) {
+            return 0;
+        }
 
         // ① 正上方是同种流体 → 这一格是「落下来的水」
         $above = $this->blockStateAt($x, $y + 1, $z);
