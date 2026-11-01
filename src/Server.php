@@ -1264,6 +1264,13 @@ final class Server
             case 0x08: // 放方块 / 使用方块
                 [$x, $y, $z] = $this->unpackPosition($r->readLong());
                 $face = $r->readUnsignedByte();
+                // 排查用：右键任何东西都会打这一行（含手上物品 id）
+                if ($this->debugLog) {
+                    $hm = $c->inventory[36 + $c->heldSlot] ?? null;
+                    $this->log(sprintf('  [0x08] 使用/放置 @ %d,%d,%d 面=%d 手持=%s',
+                        $x, $y, $z, $face,
+                        $hm === null ? '空' : $hm['id'] . 'x' . $hm['count']));
+                }
 
                 // 坐标 (-1,-1) 表示「使用了手上的物品」（吃东西、喝药），
                 // 不是对着方块操作。1.8 里吃食物就走这个包。
