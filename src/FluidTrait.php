@@ -171,6 +171,12 @@ trait FluidTrait
             if ($nid !== 0) {
                 continue;
             }
+            // 已经是同等级的水流就别再写一遍，否则每拍都触发邻居更新/物理检查
+            $same = $this->world->chunk($nx >> 4, $nz >> 4)
+                ->blockState($nx & 15, $y, $nz & 15);
+            if (($same >> 4) === $flowId && ($same & 15) === $next) {
+                continue;
+            }
             $this->changeBlock($nx, $y, $nz, $flowId, $next);
             $this->startFluid($nx, $y, $nz, $kind, $next, $depth + 1);
 
@@ -186,8 +192,9 @@ trait FluidTrait
                     }
                 }
                 if ($src >= 2) {
-                    $this->changeBlock($nx, $y, $nz, 8, 0);   // 升级成水源
-                    $this->startFluid($nx, $y, $nz, 0, 0, 0);
+                    // 只升级成水源，**不要**再 startFluid —— 否则新水源又扩散一轮，
+                    // 水流永远停不下来（就是你看到的「填上源头还在流」）。
+                    $this->changeBlock($nx, $y, $nz, 8, 0);
                 }
             }
         }

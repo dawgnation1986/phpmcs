@@ -139,8 +139,14 @@ trait BlockPhysicsTrait
         // 用队列而不是递归：之前靠 $inNeighborUpdate 挡递归，结果「掉一格触发
         // 下一格」也被挡掉了，甘蔗只剩最上面一节会掉。现在自己维护待检查队列。
         $queue = [[$x, $y, $z]];
+        $seen = [];
         for ($i = 0; $i < 512 && $queue !== []; $i++) {
             [$tx, $ty, $tz] = array_shift($queue);
+            $key = $tx . ',' . $ty . ',' . $tz;
+            if (isset($seen[$key])) {
+                continue;          // 同一格不重复处理，否则队列会 6 倍膨胀、提前撞上限
+            }
+            $seen[$key] = true;
             $id0 = $this->blockIdAt($tx, $ty, $tz);
 
             if ($id0 > 0 && in_array($id0, self::NEEDS_SUPPORT, true)
@@ -157,7 +163,14 @@ trait BlockPhysicsTrait
             }
 
             foreach ([[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]] as [$dx, $dy, $dz]) {
-                $queue[] = [$tx + $dx, $ty + $dy, $tz + $dz];
+                $nx2 = $tx + $dx;
+                $ny2 = $ty + $dy;
+                $nz2 = $tz + $dz;
+                // 空气不用排队（省得队列被空格子塞满，真正要检查的反而没轮到）
+                if ($this->blockIdAt($nx2, $ny2, $nz2) === 0) {
+                    continue;
+                }
+                $queue[] = [$nx2, $ny2, $nz2];
             }
         }
 
