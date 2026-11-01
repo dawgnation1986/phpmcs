@@ -4925,6 +4925,17 @@ final class Server
             }
         }
 
+        // 【关键】有容器打开时，背包必须按那个容器的窗口号 + 槽位映射逐格发。
+        // 之前一律发 window 0 的 45 格 —— 客户端在容器界面里收不到，
+        // 表现就是「在铁砧/工作台里拿到的东西，放进背包后消失」。
+        if ($c->workbench || $c->anvil !== null || $c->chest !== null || $c->furnace !== null) {
+            for ($i = 9; $i <= 44; $i++) {
+                $this->sendInventorySlot($c, $i, $c->inventory[$i] ?? null);
+            }
+
+            return;
+        }
+
         $w = (new Writer())->byte(0)->short(45);
         // 0 输出，1-4 2x2 合成格，5-8 盔甲，9-44 背包
         $w->raw($this->slotBytes(self::matchCraft2x2($c->craftGrid)));
