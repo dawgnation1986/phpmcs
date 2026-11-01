@@ -25,6 +25,8 @@ trait FluidTrait
     private array $fluidQueue = [];
     /** @var array 去重 "x,y,z" => true */
     private array $fluidQueued = [];
+    /** 本拍刚被删掉的格子：同一拍里不许被邻居重新填回来，否则会「越退越深」 */
+    private array $fluidTomb = [];
     private float $lastFluidTick = 0.0;
 
     private function fluidSourceId(int $kind): int
@@ -104,6 +106,7 @@ trait FluidTrait
             return;
         }
         $this->lastFluidTick = $now;
+        $this->fluidTomb = [];
 
         $budget = 200;
         while ($budget-- > 0 && $this->fluidQueue !== []) {
@@ -160,6 +163,7 @@ trait FluidTrait
 
         if ($want === null) {
             // 没有来源支撑 → 干掉这一格，并让邻居重算（逐格退潮）
+            $this->fluidTomb[$x . ',' . $y . ',' . $z] = true;
             $this->changeBlock($x, $y, $z, 0, 0);
             $this->notifyFluidNeighbors($x, $y, $z, $kind);
 
@@ -226,7 +230,12 @@ trait FluidTrait
             }
             // meta 8~15 是下落水，参与等级计算时按 0 处理
             $eff = $nm >= 8 ? 0 : $nm;
-            if ($eff < $reach) {
+
+            // ★ 关键：只认「比当前更浅」的邻居。
+            // 原版 BlockDynamicLiquid 计算水位时，只有 level < 当前 的邻居才算来源。
+            // 之前把平级/更深的邻居也算进来，于是 meta 1 的水看到旁边 meta 2 的水，
+            // 会算出「我该是 3」永远不会消失 —— 填掉水源后周围的水就退不掉。
+            if ($eff < $current && $eff < $reach) {
                 $best = $best === null ? $eff : min($best, $eff);
             }
         }
@@ -333,6 +342,10 @@ trait FluidTrait
                 continue;
             }
             if (!$this->fluidCanReplace($nid)) {
+                continue;
+            }
+            // 这一格刚在本拍被判定「该退」—— 不许同一拍被填回来
+            if (isset($this->fluidTomb[$nx . ',' . $y . ',' . $nz])) {
                 continue;
             }
 

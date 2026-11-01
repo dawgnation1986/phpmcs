@@ -113,3 +113,41 @@ for ($i = 0; $i < 6; $i++) {
 
 echo "\nF2 两源夹一格：", show($c, [[1, 64, 1], [2, 64, 1], [3, 64, 1]]), "\n";
 echo "  （期望：2,1 变成 9:0 水源）\n";
+
+// ── F3：填掉水源，周围的水必须退干净 ────────────────────────────
+for ($x = 0; $x < 10; $x++) {
+    for ($z = 9; $z <= 11; $z++) {
+        for ($y = 64; $y < 67; $y++) {
+            $c->setBlock($x, $y, $z, 0, 0);      // 先把走廊清空，别被 F1/F2 的水污染
+        }
+        $c->setBlock($x, 63, $z, 1, 0);          // 石头地面
+    }
+}
+$c->setBlock(1, 64, 10, 9, 0);           // 一桶水源
+$set->call($s, 'fluidQueue', []);
+$set->call($s, 'fluidQueued', []);
+$start->invoke($s, 1, 64, 10, 0);
+for ($i = 0; $i < 12; $i++) {
+    $tick->invoke($s, microtime(true) + 200 + $i * 0.3);
+}
+$before = [];
+for ($x = 1; $x <= 6; $x++) {
+    $st = $c->blockState($x, 64, 10);
+    $before[] = sprintf('%d:%d', $st >> 4, $st & 15);
+}
+echo "\nF3 退潮前：x1..6 = ", implode(' ', $before), "\n";
+
+// 填掉水源（用泥土），然后只通知邻居
+$c->setBlock(1, 64, 10, 3, 0);
+$set->call($s, 'fluidQueue', []);
+$set->call($s, 'fluidQueued', []);
+$start->invoke($s, 2, 64, 10, 0);
+for ($i = 0; $i < 20; $i++) {
+    $tick->invoke($s, microtime(true) + 400 + $i * 0.3);
+}
+$after = [];
+for ($x = 1; $x <= 6; $x++) {
+    $st = $c->blockState($x, 64, 10);
+    $after[] = ($st >> 4) === 0 ? '.' : sprintf('%d:%d', $st >> 4, $st & 15);
+}
+echo "F3 退潮后：x1..6 = ", implode(' ', $after), " （期望全是 . ）\n";
