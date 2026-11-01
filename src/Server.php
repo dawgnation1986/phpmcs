@@ -191,6 +191,7 @@ final class Server
     use EnchantTrait;
     use EntityStoreTrait;
     use ArrowTrait;
+    use BlockPhysicsTrait;
     use FluidTrait;
     use RedstoneTrait;
 
@@ -2033,6 +2034,16 @@ final class Server
         // 邻居更新：让周围连通的红石粉重算强度（放/拆电源、放/拆导线都走这里）
         $this->updateRedstoneAround($x, $y, $z);
 
+        // 方块物理：支撑检查 + 重力方块（悬空甘蔗、沙砾下落都靠这里）
+        if (!$this->inNeighborUpdate) {
+            $this->inNeighborUpdate = true;
+            try {
+                $this->neighborUpdate($x, $y, $z);
+            } finally {
+                $this->inNeighborUpdate = false;
+            }
+        }
+
         $this->broadcastBlockChange($x, $y, $z, (($id & 0xFF) << 4) | ($meta & 0x0F));
         $this->markSection($x, $y, $z);
 
@@ -2785,6 +2796,9 @@ final class Server
     /** @var array 玩家名 => 总经验 */
     /** 饱食度调试：/foodlog 开关，开启后每次消耗/结算都写日志 */
     private bool $foodDebug = false;
+
+    /** 邻居更新递归保护（changeBlock → neighborUpdate → changeBlock） */
+    private bool $inNeighborUpdate = false;
 
     /** 正在吃的东西：itemId + 吃完的时刻（原版要等 1.6 秒） */
     private static function eatDuration(): float
@@ -4984,6 +4998,7 @@ final class Server
         $this->tickXpOrbs($now);
         $this->tickArrows($now);
         $this->tickFood($now);
+        $this->tickFalling($now);
         $this->tickFluids($now);
         $this->tickFurnaces($now);
         $this->tickBrewing($now);
