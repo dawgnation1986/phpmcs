@@ -42,6 +42,7 @@ require __DIR__ . '/../src/EnchantTrait.php';
 require __DIR__ . '/../src/EntityStoreTrait.php';
 require __DIR__ . '/../src/ArrowTrait.php';
 require __DIR__ . '/../src/BlockPhysicsTrait.php';
+require __DIR__ . '/../src/AnvilTrait.php';
 require __DIR__ . '/../src/FluidTrait.php';
 require __DIR__ . '/../src/RedstoneTrait.php';
 require __DIR__ . '/../src/RecipeTable.php';

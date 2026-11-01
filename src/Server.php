@@ -63,6 +63,9 @@ final class Connection
     /** 最近收到的包 id（定位附魔丢失时看上下文） */
     public array $pktLog = [];
 
+    /** 铁砧窗口：x/y/z + 两个输入槽 */
+    public ?array $anvil = null;
+
     /** 正在乘坐的载具 eid（0 = 没坐） */
     public int $riding = 0;
 
@@ -192,6 +195,7 @@ final class Server
     use EntityStoreTrait;
     use ArrowTrait;
     use BlockPhysicsTrait;
+    use AnvilTrait;
     use FluidTrait;
     use RedstoneTrait;
 
@@ -1333,6 +1337,12 @@ final class Server
                     break;
                 }
 
+                // 145 = 铁砧
+                if ($hitId === 145) {
+                    $this->openAnvil($c, $x, $y, $z);
+                    break;
+                }
+
                 // 62 = 点亮的熔炉：燃烧时方块 id 会变成 62，右键也得认
                 if ($hitId === 61 || $hitId === 62 || $hitId === 133) {
                     if ($this->hasFurnace($x, $y, $z)) {
@@ -1876,6 +1886,8 @@ final class Server
                     $this->clickEnchant($c, $slot, $button, $mode, $cursor);
                 } elseif ($c->brewing !== null && $windowId === 5) {
                     $this->clickBrewing($c, $slot, $button, $mode, $cursor);
+                } elseif ($c->anvil !== null && $windowId === 1) {
+                    $this->clickAnvil($c, $slot, $button, $mode, $cursor);
                 } elseif ($c->furnace !== null && ($windowId === 1 || $windowId === 2 || $windowId === 3)) {
                     $this->clickFurnace($c, $slot, $button, $mode, $cursor);
                 } elseif ($windowId === 1) {
@@ -1904,7 +1916,9 @@ final class Server
                 $windowId = $r->readByte();
                 $snapBefore = json_encode($c->inventory[40] ?? null);
                 $this->resetDrag($c);
-                if ($windowId === 3) {
+                if ($c->anvil !== null) {
+                    $this->closeAnvil($c);
+                } elseif ($windowId === 3) {
                     $this->closeFurnace($c);
                 } elseif ($windowId === 2) {
                     $this->closeWorkbench($c);
