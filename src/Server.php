@@ -201,8 +201,6 @@ final class Server
     private const C_SPAWN_XP_ORB = 0x11;
     /** S->C Attach Entity：乘坐的实体 id + 载具 id（-1 = 下来）+ 拴绳字节 */
     private const C_ATTACH_ENTITY = 0x1B;
-    /** S->C Use Bed：实体 id + 床坐标。客户端收到才会躺下 */
-    private const C_USE_BED = 0x0A;
     private const C_ENTITY_MOVE = 0x15;
     /** S->C Set Experience：进度(float) + 等级(varint) + 总经验(varint) */
     private const C_SET_EXPERIENCE = 0x1F;      // 相对移动（客户端插值，看着顺）
