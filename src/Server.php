@@ -123,6 +123,10 @@ final class Connection
     public int $prevFoodLevel = 20;
     /** 距离上一次 FoodStats.onUpdate 的时间（用它把主循环降到 20 TPS） */
     public float $lastFoodTick = 0.0;
+    /** 正在吃的物品 id（0 = 没在吃） */
+    public int $eatingItem = 0;
+    /** 吃完的时刻 */
+    public float $eatAt = 0.0;
     /** 开始下落时的高度，落地时用来算摔伤 */
     public float $fallFrom = -1.0;   // <0 表示没在下落
     /** @var array<string, bool> 已经发过区块的 "cx,cz" */
@@ -2780,6 +2784,12 @@ final class Server
     /** 饱食度调试：/foodlog 开关，开启后每次消耗/结算都写日志 */
     private bool $foodDebug = false;
 
+    /** 正在吃的东西：itemId + 吃完的时刻（原版要等 1.6 秒） */
+    private static function eatDuration(): float
+    {
+        return 1.6;
+    }
+
     /** 世界规则 naturalRegeneration，1.8 默认 true */
     private bool $naturalRegen = true;
 
@@ -3827,18 +3837,31 @@ final class Server
             return;
         }
 
-        // 一口 1.6 秒。没有这个，客户端一直发「使用物品」就会连吃，
-        // 看起来就像「饱食度自动回满」。
+        // 原版：按右键**开始**吃，1.6 秒后才真正吞下去（客户端动画也是这个长度）。
+        // 以前收到包就立刻扣物品，所以会出现「秒吃」和「动画放完了但没吃」。
         $now = microtime(true);
-        if ($now < $c->nextEatAt) {
+        if ($c->eatingItem === $itemId && $now < $c->eatAt) {
+            return;                        // 同一口还没嚼完，忽略重复包
+        }
+        $c->eatingItem = $itemId;
+        $c->eatAt = $now + 1.6;
+
+        return;
+    }
+
+    /** 嚼完了：扣物品、加饱食度和饱和度（由 tickFood 调用） */
+    private function finishEating(Connection $c): void
+    {
+        $itemId = $c->eatingItem;
+        $c->eatingItem = 0;
+        $food = self::FOOD[$itemId] ?? 0;
+        if ($food <= 0) {
             return;
         }
-        $c->nextEatAt = $now + 1.6;
-
         $slot = 36 + $c->heldSlot;
         $it = $c->inventory[$slot] ?? null;
-        if ($it === null || $it['id'] !== $itemId) {
-            return;
+        if ($it === null || (int) $it['id'] !== $itemId) {
+            return;                        // 中途换了手，不算吃完
         }
 
         if ($it['count'] > 1) {
@@ -3880,6 +3903,11 @@ final class Server
             }
             $f->lastFoodTick = $now;
 
+            // 嚼完了就吞：1.6 秒到点才扣物品、加饱食度
+            if ($f->eatingItem > 0 && $now >= $f->eatAt) {
+                $this->finishEating($f);
+            }
+
             $f->prevFoodLevel = $f->food;
 
             // ① 消耗结算：每 tick 检查一次（原版就是这样，不是攒到 4 秒）
@@ -3890,8 +3918,8 @@ final class Server
                 } else {
                     $f->food = max(0, $f->food - 1);
                 }
-                $this->log("  {$f->username} 饱食度降到 {$f->food}（饱和 "
-                    . round($f->saturation, 1) . '）');
+                $this->log(sprintf('  %s 消耗结算 -> 饱食 %d 饱和 %.1f',
+                    $f->username, $f->food, $f->saturation));
                 $this->syncVitals($f);
             }
 
