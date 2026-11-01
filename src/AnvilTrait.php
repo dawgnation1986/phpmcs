@@ -86,12 +86,13 @@ trait AnvilTrait
         }
         $a = $c->anvil['slot0'];
         $b = $c->anvil['slot1'];
+        $name = $c->anvil['name'] ?? null;
 
         if ($a === null) {
             return null;
         }
         if ($b === null) {
-            return $a;                       // 只放一件：原样
+            return $this->anvilName($a, $name);   // 只放一件：原样（可能只是改名）
         }
 
         // ① 同一件物品：耐久相加（上限 100%）+ 附魔取高
@@ -121,7 +122,7 @@ trait AnvilTrait
                 }
             }
 
-            return $out;
+            return $this->anvilName($out, $name);
         }
 
         // ② 工具 + 材料：修复 25%
@@ -132,11 +133,22 @@ trait AnvilTrait
                 $out = $a;
                 $out['damage'] = max(0, (int) ($a['damage'] ?? 0) - (int) ($max * 0.25));
 
-                return $out;
+                return $this->anvilName($out, $name);
             }
         }
 
         return null;
+    }
+
+    /** 把铁砧里输入的名字贴到产物上（名字以 display.Name 存在物品里） */
+    private function anvilName(?array $item, ?string $name): ?array
+    {
+        if ($item === null || $name === null || $name === '') {
+            return $item;
+        }
+        $item['name'] = $name;
+
+        return $item;
     }
 
     /** 铁砧里的点击 */

@@ -1951,6 +1951,19 @@ final class Server
                     implode(' | ', array_map(fn($v) => mb_substr($v, 0, 20), $sgnLines))));
                 break;
 
+            case 0x17: // Custom Payload：铁砧改名走 MC|ItemName
+                $channel = $r->readString(20);
+                if ($channel === 'MC|ItemName' && $c->anvil !== null) {
+                    $name = trim($r->rest());
+                    // 1.8 只允许 30 字符以内，且不能是空白
+                    if ($name !== '' && mb_strlen($name) <= 30) {
+                        $c->anvil['name'] = $name;
+                        $this->log("  {$c->username} 铁砧改名: {$name}");
+                        $this->sendAnvilWindow($c);
+                    }
+                }
+                break;
+
             case 0x0B: // Entity Action（潜行/疾跑）
                 $entAction = $r->readUnsignedByte();
                 if ($entAction === 0 && $c->riding > 0) {   // 0 = 开始潜行 → 下船

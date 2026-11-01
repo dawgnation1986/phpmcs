@@ -24,8 +24,16 @@ trait ChestTrait
             return pack('n', 0xFFFF);   // short -1 = 空槽
         }
 
-        // 附魔过的物品要带 NBT，否则客户端不显示紫色的附魔名
+        // 附魔 / 自定义名字都要带 NBT
         $nbt = "\x00";
+        if (!empty($item['name'])) {
+            // 铁砧改过的名字存在 display.Name 里（1.8 就是这个名字）
+            $nbt = Nbt::write(Tag::compound([
+                'display' => Tag::compound([
+                    'Name' => Tag::string((string) $item['name']),
+                ]),
+            ]));
+        }
         if (!empty($item['ench'])) {
             $list = [];
             foreach ($item['ench'] as $e) {
@@ -36,10 +44,16 @@ trait ChestTrait
             }
             // Nbt::write 已经包含根标签头（type + 名称长度 + 名称），
             // 再手动加 chr(10) 会让客户端把 0x0A00 读成字符串长度 2560 而断线。
-            $nbt = Nbt::write(Tag::compound([
+            $root = [
                 'ench' => Tag::list(10, $list),
                 'RepairCost' => Tag::int(1),
-            ]));
+            ];
+            if (!empty($item['name'])) {
+                $root['display'] = Tag::compound([
+                    'Name' => Tag::string((string) $item['name']),
+                ]);
+            }
+            $nbt = Nbt::write(Tag::compound($root));
         }
 
         return pack('n', $item['id'] & 0xFFFF)
