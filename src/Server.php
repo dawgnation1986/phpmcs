@@ -2432,8 +2432,10 @@ final class Server
                 ($c->x - $c->lastX) ** 2 + ($c->z - $c->lastZ) ** 2
             );
             if ($dist > 0.02) {
-                // 原版：走路 0.01/格、疾跑 0.1/格。我们没区分疾跑，先按走路算。
-                $this->addExhaustion($c, $dist * 0.01);
+                // 原版：走路 0.01/格、疾跑 0.1/格。
+                // 没有专门的疾跑包，用单次位移判断：> 0.25 格/包算跑。
+                $rate = $dist > 0.25 ? 0.1 : 0.01;
+                $this->addExhaustion($c, $dist * $rate);
             }
             if ($onGround === false && $c->y > $c->lastY + 0.15) {
                 $this->addExhaustion($c, 0.2);   // 原版普通跳跃 0.2
@@ -5133,8 +5135,11 @@ final class Server
         // 每秒同步一次时间，客户端天空才会真的昼→夜
         if ($now - $this->lastTimeSync >= 1.0) {
             $this->lastTimeSync = $now;
-            // 【已撤】之前每秒强制补 0x06，结果客户端每次收到都重画饥饿条，
-            // 看起来一直在抖。原版只在值变化时发，这里照原版。
+            // 每秒补一次 0x06。原版只在变化时发，但我们的客户端会「自己涨回满」，
+            // 不发就看不出真实饱食度（也就不知道自己能不能吃）。用户要求保留。
+            foreach ($this->players() as $fp) {
+                $this->syncVitals($fp, true);
+            }
             foreach ($this->players() as $p) {
                 $p->send(self::C_TIME_UPDATE, (new Writer())
                     ->long($this->world->worldAge())
