@@ -3841,7 +3841,7 @@ final class Server
         // modifier 每种食物不同，这里按 1.8 的数值表查
         $mod = self::FOOD_SAT[$itemId] ?? 0.6;
         $c->saturation = min((float) $c->food, $c->saturation + $food * $mod * 2.0);
-        $c->health = min(20.0, $c->health + 1.0);
+        // 【不要在这加血】吃东西只补饱食度和饱和度，回血由 tickFood 每 80 tick 处理。
         $this->syncVitals($c);
         $this->log("  {$c->username} 吃了方块{$itemId}，饱食度 {$c->food}，血 {$c->health}");
     }
