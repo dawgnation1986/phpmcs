@@ -74,6 +74,10 @@ final class Connection
 
     /** 站在传送门里的起始时刻（0 = 没在门里） */
     public float $portalSince = 0.0;
+    /** 当前客户端维度（0 主世界 / -1 地狱），回程要切回来 */
+    public int $portalDim = 0;
+    /** 维度包补发时刻（>0 表示待补发） */
+    public float $portalResyncAt = 0.0;
     /** 进传送门前的位置，回来时用 */
     public ?array $portalReturn = null;
 
@@ -5252,6 +5256,7 @@ final class Server
         $this->tickFalling($now);
         $this->tickFireDamage($now);
         $this->tickPortals($now);
+        $this->tickPortalDimResync($now);
         $this->tickFluids($now);
         $this->tickFurnaces($now);
         $this->tickBrewing($now);

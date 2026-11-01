@@ -225,6 +225,10 @@ trait PortalTrait
         // 【关键】发 Respawn 让客户端切到「地狱」维度。
         // 我们不真的建 DIM-1 存档（数据还是同一个世界），只是让客户端按维度 -1 渲染：
         // 天空变暗红、有雾、没有日夜。回去时再发一次维度 0。
+        // 记住现在在哪个维度，方便 1 秒后再补发一次
+        $c->portalDim = $atNether ? 0 : -1;
+        $c->portalResyncAt = microtime(true) + 1.0;
+
         $c->send(self::C_RESPAWN, (new Writer())
             ->int($atNether ? 0 : -1)      // 目标维度
             ->byte(1)                       // 难度 normal
@@ -239,6 +243,27 @@ trait PortalTrait
         $this->queueChunks($c);
         $this->log(sprintf('  %s 传送 -> %.1f,%.1f,%.1f', $c->username, $c->x, $c->y, $c->z));
         $this->sendChat($c, ['text' => $atNether ? '回到主世界。' : '你来到了地狱。', 'color' => 'light_purple'], 1);
+    }
+
+    /** 传送后 1 秒补发一次维度包（客户端偶尔把紧跟后面的包吞掉） */
+    private function tickPortalDimResync(float $now): void
+    {
+        foreach ($this->players() as $p) {
+            if ($p->portalResyncAt <= 0 || $now < $p->portalResyncAt) {
+                continue;
+            }
+            $p->portalResyncAt = 0.0;
+            $p->send(self::C_RESPAWN, (new Writer())
+                ->int($p->portalDim)
+                ->byte(1)
+                ->byte($p->gamemode)
+                ->string('default'));
+            $p->send(self::C_POS_LOOK, (new Writer())
+                ->double($p->x)->double($p->y)->double($p->z)
+                ->float($p->yaw)->float($p->pitch)->byte(0));
+            $this->queueChunks($p);
+            $this->log('  补发维度包 dim=' . $p->portalDim);
+        }
     }
 
     /** 现搭一个 24×24 的地狱岩平台（只搭一次） */
