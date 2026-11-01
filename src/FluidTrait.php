@@ -136,16 +136,24 @@ trait FluidTrait
             return false;
         }
 
-        // 不是流动水 → 不用管（别的方块自己会触发邻居更新）
+        // 静止水但 meta > 0：原版收到邻居更新后会「唤醒」成动态水，保留原等级。
+        // 之前这里直接 return，导致稳定下来的流水永远不参与重算 ——
+        // 填掉一格以后周围的水就卡住不动了。
+        if ($id === $source && $meta > 0) {
+            $this->changeBlock($x, $y, $z, $flowing, $meta);
+            $id = $flowing;
+        }
+
         if ($id !== $flowing) {
             return false;
         }
 
-        // meta 0 的流动水等于源级：只负责往外扩，不参与降级
+        // 动态 meta 0 = 源级：原版会把它转成静止水源（9, meta 0），然后往外扩
         if ($meta === 0) {
+            $this->changeBlock($x, $y, $z, $source, 0);
             $this->spreadFrom($x, $y, $z, $kind, 0);
 
-            return false;
+            return true;
         }
 
         $want = $this->computeLevel($x, $y, $z, $kind, $meta);
@@ -160,6 +168,11 @@ trait FluidTrait
 
         if ($want !== $meta) {
             $this->changeBlock($x, $y, $z, $flowing, $want);
+        }
+
+        // 先看这一格能不能升级成水源（两格水夹一格就是这条）
+        if ($this->tryCreateSource($x, $y, $z, $kind)) {
+            return true;
         }
 
         $this->spreadFrom($x, $y, $z, $kind, $want);
@@ -200,13 +213,21 @@ trait FluidTrait
             }
             $nid = $nb >> 4;
             $nm = $nb & 15;
-            if ($nid === $source || ($nid === $flowing && $nm === 0)) {
+
+            // 只有同种液体才参与计算
+            if ($nid !== $source && $nid !== $flowing) {
+                continue;
+            }
+            // 只有 meta 0 才是真水源（ID 8 和 9 的 meta 0 都算）
+            if ($nm === 0) {
                 $best = 0;
 
                 continue;
             }
-            if ($nid === $flowing && $nm < $reach) {
-                $best = $best === null ? $nm : min($best, $nm);
+            // meta 8~15 是下落水，参与等级计算时按 0 处理
+            $eff = $nm >= 8 ? 0 : $nm;
+            if ($eff < $reach) {
+                $best = $best === null ? $eff : min($best, $eff);
             }
         }
 
@@ -216,6 +237,48 @@ trait FluidTrait
         $want = $best + 1;
 
         return $want > $reach ? null : $want;
+    }
+
+    /**
+     * 某一格能不能升级成水源（原版：水平 ≥2 个 meta=0 的同种液体，
+     * 且下方是固体或同种 meta=0 液体）。
+     * 注意要判断「这一格」本身，而不是旁边的水源 —— 之前写在 spreadFrom 里
+     * 判断的是源头自己，所以永远升不了级。
+     */
+    private function tryCreateSource(int $x, int $y, int $z, int $kind): bool
+    {
+        if ($kind !== 0) {
+            return false;
+        }
+        $source = $this->fluidSourceId(0);
+        $flowing = $this->fluidFlowingId(0);
+
+        $src = 0;
+        foreach ([[1, 0], [-1, 0], [0, 1], [0, -1]] as [$dx, $dz]) {
+            $nb = $this->blockStateAt($x + $dx, $y, $z + $dz);
+            if ($nb < 0) {
+                continue;
+            }
+            $nid = $nb >> 4;
+            if (($nid === $source || $nid === $flowing) && ($nb & 15) === 0) {
+                $src++;
+            }
+        }
+        if ($src < 2) {
+            return false;
+        }
+
+        $b = $this->blockStateAt($x, $y - 1, $z);
+        $bid = $b >= 0 ? $b >> 4 : 0;
+        $solidBelow = $bid !== 0 && !$this->isFluidId($bid);
+        $waterBelow = $b >= 0 && ($bid === $source || $bid === $flowing) && ($b & 15) === 0;
+        if (!$solidBelow && !$waterBelow) {
+            return false;
+        }
+
+        $this->changeBlock($x, $y, $z, $source, 0);
+
+        return true;
     }
 
     /** 从一个格子往外扩散 */
@@ -232,7 +295,10 @@ trait FluidTrait
                 $bid = $below >> 4;
                 $sameFluid = $this->isFluidId($bid) && $this->fluidKindOf($bid) === $kind;
                 if (!$sameFluid && $this->fluidCanReplace($bid)) {
-                    $this->changeBlock($x, $y - 1, $z, $flowing, 8);
+                    // 原版：下落水的 meta = 上方等级 + 8（0->8, 1->9, 7->15），
+                    // 不是永远写 8。
+                    $fallMeta = $meta >= 8 ? $meta : $meta + 8;
+                    $this->changeBlock($x, $y - 1, $z, $flowing, $fallMeta);
                     $this->startFluid($x, $y - 1, $z, $kind);
 
                     return;          // 原版：能往下就不再横向扩
@@ -241,10 +307,12 @@ trait FluidTrait
         }
 
         // ② 横向
-        if ($meta >= $reach) {
+        // 注意：meta 8~15 是「下落水」，不能按 >= reach 直接 return，
+        // 否则瀑布落到地面之后永远不会横向铺开（之前就是这个 bug）。
+        if ($meta < 8 && $meta >= $reach) {
             return;
         }
-        $next = ($meta >= 8) ? 1 : $meta + 1;      // 落下来的水横向从头算
+        $next = ($meta >= 8) ? 1 : $meta + 1;
 
         foreach ([[1, 0], [-1, 0], [0, 1], [0, -1]] as [$dx, $dz]) {
             $nx = $x + $dx;
@@ -272,24 +340,5 @@ trait FluidTrait
             $this->startFluid($nx, $y, $nz, $kind);
         }
 
-        // ③ 无限水：相邻 ≥2 个水源，且下方是固体或同种水源
-        if ($kind === 0) {
-            $srcCount = 0;
-            foreach ([[1, 0], [-1, 0], [0, 1], [0, -1]] as [$dx, $dz]) {
-                $nb = $this->blockStateAt($x + $dx, $y, $z + $dz);
-                if ($nb >= 0 && ($nb >> 4) === $source && ($nb & 15) === 0) {
-                    $srcCount++;
-                }
-            }
-            if ($srcCount >= 2) {
-                $b = $this->blockStateAt($x, $y - 1, $z);
-                $bid = $b >= 0 ? $b >> 4 : 0;
-                $solidBelow = $bid !== 0 && !$this->isFluidId($bid);
-                $waterBelow = $bid === $source && ($b & 15) === 0;
-                if ($solidBelow || $waterBelow) {
-                    $this->changeBlock($x, $y, $z, $source, 0);
-                }
-            }
-        }
     }
 }
