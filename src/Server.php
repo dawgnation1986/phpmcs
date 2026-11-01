@@ -1886,7 +1886,7 @@ final class Server
                     $this->clickEnchant($c, $slot, $button, $mode, $cursor);
                 } elseif ($c->brewing !== null && $windowId === 5) {
                     $this->clickBrewing($c, $slot, $button, $mode, $cursor);
-                } elseif ($c->anvil !== null && $windowId === 1) {
+                } elseif ($c->anvil !== null) {
                     $this->clickAnvil($c, $slot, $button, $mode, $cursor);
                 } elseif ($c->furnace !== null && ($windowId === 1 || $windowId === 2 || $windowId === 3)) {
                     $this->clickFurnace($c, $slot, $button, $mode, $cursor);

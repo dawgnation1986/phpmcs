@@ -40,11 +40,17 @@ trait AnvilTrait
         $c->anvil = ['x' => $x, 'y' => $y, 'z' => $z, 'slot0' => null, 'slot1' => null];
         $c->cursor = null;
 
+        // 1.8 里铁砧是「容器 id 8」。之前沿用箱子的 windowId=1，
+        // 客户端就按普通容器排版（把 39 个槽摊成 4 行），布局全乱。
         $c->send(self::C_OPEN_WINDOW, (new Writer())
-            ->byte(1)                                  // 沿用箱子的 windowId=1（实测可开）
+            ->byte(8)
             ->string('minecraft:anvil')
             ->string(json_encode(['text' => '铁砧'], JSON_UNESCAPED_UNICODE))
-            ->byte(39));                               // 3 个铁砧槽 + 36 背包
+            ->byte(39));                               // 2 输入 + 1 产物 + 36 背包
+
+        if ($this->debugLog) {
+            $this->log('  [铁砧] 发 Open Window：windowId=8 type=minecraft:anvil slots=39');
+        }
 
         $this->sendAnvilWindow($c);
         $this->log("  {$c->username} 打开铁砧 {$x},{$y},{$z}");
@@ -63,7 +69,7 @@ trait AnvilTrait
         for ($i = 9; $i <= 44; $i++) {
             $slots[] = $c->inventory[$i] ?? null;
         }
-        $w = (new Writer())->byte(1)->short(count($slots));
+        $w = (new Writer())->byte(8)->short(count($slots));
         foreach ($slots as $it) {
             $w->raw($this->slotBytes($it));
         }
