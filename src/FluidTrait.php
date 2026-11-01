@@ -37,19 +37,27 @@ trait FluidTrait
     /** 放置流体方块时调用：先落地，再排队扩散 */
     private function placeFluid(int $x, int $y, int $z, int $kind): void
     {
-        $sourceId = $kind === 0 ? 8 : 10;
-        $this->changeBlock($x, $y, $z, $sourceId, 0);
+        // 原版水桶放的是 flowing_water(8)，稳定后才转成 water(9)
+        $this->changeBlock($x, $y, $z, $this->fluidFlowingId($kind), 0);
         $this->startFluid($x, $y, $z, $kind, 0);
     }
 
+    /**
+     * 1.8.9 的 ID 语义（已用 tools/audit_fluids.php 审计存档确认）：
+     *   8  = flowing_water（流动水）      9  = water（静止水）
+     *   10 = flowing_lava（流动岩浆）     11 = lava（静止岩浆）
+     * 我们之前写反了（把 8 当水源、9 当流动水），导致：
+     *   - 世界里的静止水(9) 被当成「待清理的流动水」
+     *   - 往水里放方块时的退潮把整条河删光
+     */
     private function fluidSourceId(int $kind): int
     {
-        return $kind === 0 ? 8 : 10;
+        return $kind === 0 ? 9 : 11;
     }
 
     private function fluidFlowingId(int $kind): int
     {
-        return $kind === 0 ? 9 : 11;
+        return $kind === 0 ? 8 : 10;
     }
 
     /** 这个方块 id 是不是流体 */
@@ -192,14 +200,14 @@ trait FluidTrait
                 foreach ([[1, 0], [-1, 0], [0, 1], [0, -1]] as [$ax, $az]) {
                     $nb = $this->world->chunk(($nx + $ax) >> 4, ($nz + $az) >> 4)
                         ->blockState(($nx + $ax) & 15, $y, ($nz + $az) & 15) >> 4;
-                    if ($nb === 8) {
+                    if ($nb === $this->fluidSourceId(0)) {   // 9 = 静止水才算水源
                         $src++;
                     }
                 }
                 if ($src >= 2) {
                     // 只升级成水源，**不要**再 startFluid —— 否则新水源又扩散一轮，
                     // 水流永远停不下来（就是你看到的「填上源头还在流」）。
-                    $this->changeBlock($nx, $y, $nz, 8, 0);
+                    $this->changeBlock($nx, $y, $nz, $this->fluidSourceId(0), 0);
                 }
             }
         }
