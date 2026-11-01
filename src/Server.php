@@ -1689,6 +1689,11 @@ final class Server
                     }
                     if (($cur >> 4) === 0) {
                         $this->changeBlock($tx, $ty, $tz, 51, 0);
+                        // 原版就是「火点进框里 → 变传送门」。
+                        // 放完火再认一次框，比「点击那一刻判框」稳得多。
+                        if ($this->tryIgnitePortal($c, $tx, $ty, $tz)) {
+                            $this->changeBlock($tx, $ty, $tz, 0, 0);   // 火撤掉
+                        }
                     }
                     if ($c->gamemode !== 1) {
                         $hs = 36 + $c->heldSlot;
