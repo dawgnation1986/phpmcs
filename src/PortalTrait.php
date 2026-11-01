@@ -221,6 +221,16 @@ trait PortalTrait
         $c->x = (float) $tx;
         $c->y = (float) $ty;
         $c->z = (float) $tz;
+
+        // 【关键】发 Respawn 让客户端切到「地狱」维度。
+        // 我们不真的建 DIM-1 存档（数据还是同一个世界），只是让客户端按维度 -1 渲染：
+        // 天空变暗红、有雾、没有日夜。回去时再发一次维度 0。
+        $c->send(self::C_RESPAWN, (new Writer())
+            ->int($atNether ? 0 : -1)      // 目标维度
+            ->byte(1)                       // 难度 normal
+            ->byte($c->gamemode)            // 游戏模式
+            ->string('default'));           // 世界类型
+
         $c->send(self::C_POS_LOOK, (new Writer())
             ->double($c->x)->double($c->y)->double($c->z)
             ->float($c->yaw)->float($c->pitch)->byte(0));
@@ -256,6 +266,14 @@ trait PortalTrait
                         $chunk->setBlock(($ox + $dx) & 15, $oy + $dy, ($oz + $dz) & 15, self::NETHERRACK, 0);
                     }
                 }
+            }
+        }
+
+        // 天花板：铺一层地狱岩，客户端看不到主世界的天空
+        for ($dx = -12; $dx <= 12; $dx++) {
+            for ($dz = -12; $dz <= 12; $dz++) {
+                $chunk = $this->world->chunk(($ox + $dx) >> 4, ($oz + $dz) >> 4);
+                $chunk->setBlock(($ox + $dx) & 15, $oy + 6, ($oz + $dz) & 15, self::NETHERRACK, 0);
             }
         }
 

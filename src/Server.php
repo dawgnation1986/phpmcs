@@ -248,6 +248,9 @@ final class Server
     // 1.8：0x0B 是 Animation（挥手），0x0D 才是 Collect Item。
     // 写成 0x0B 的话客户端只会挥一下手，地上的东西永远不消失。
     private const C_ANIMATION = 0x0B;
+    /** S->C Respawn：切维度（int 维度 / byte 难度 / byte 模式 / string 世界类型） */
+    private const C_RESPAWN = 0x07;
+
     /** S->C Use Bed：让客户端躺下；传 (-1,-1,-1) 是叫它起来 */
     private const C_USE_BED = 0x0A;
     private const C_COLLECT_ITEM = 0x0D;
