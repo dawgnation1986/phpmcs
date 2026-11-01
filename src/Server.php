@@ -1283,13 +1283,15 @@ final class Server
 
                 if ($hitId === 26) {
                     if ($this->isNight()) {
-                        // 发 0x0A Use Bed，客户端才会真的躺下。
-                        // 叫起来靠「位置包 y+0.1」—— 参考实现（别人的/phpmc）就是这么做的。
-                        $this->sleeping[$c->entityId] = microtime(true) + 3.0;
-                        $bedPos = $this->packPositionBytes($x, $y, $z);
+                        // 【不再发 0x0A】1.8 客户端一旦收到 Use Bed 就进入躺姿，
+                        // 而服务端没有任何可靠的包能让它退出（位置包、0x0A 填 -1
+                        // 全试过，人卡在床上，只剩一个点不动的「起床」按钮）。
+                        // 所以改成：不发躺卧包，直接跳过夜晚。
+                        $this->world->setTimeOfDay(1);
                         foreach ($this->players() as $sv) {
-                            $sv->send(self::C_USE_BED, (new Writer())
-                                ->varInt($c->entityId)->raw($bedPos));
+                            $sv->send(self::C_TIME_UPDATE, (new Writer())
+                                ->long($this->world->worldAge())
+                                ->long($this->world->timeOfDay()));
                         }
                         $this->sendChat($c, ['text' => '你躺下了……', 'color' => 'gray'], 1);
                         $this->log('  ' . $c->username . ' 躺下 @ ' . $x . ',' . $y . ',' . $z);
@@ -2767,6 +2769,9 @@ final class Server
     }
 
     /** @var array 玩家名 => 总经验 */
+    /** 饱食度调试：/foodlog 开关，开启后每次消耗/结算都写日志 */
+    private bool $foodDebug = false;
+
     private array $xpStore = [];
     private bool $xpLoaded = false;
 
@@ -3501,6 +3506,13 @@ final class Server
                 $this->sendChat($c, ['text' => $rows === [] ? '背包是空的' : implode(' ', $rows), 'color' => 'aqua'], 1);
                 break;
 
+            case 'foodlog':
+                $this->foodDebug = !$this->foodDebug;
+                $this->sendChat($c, ['text' => '饱食度日志：' . ($this->foodDebug ? '已开启' : '已关闭'),
+                    'color' => 'aqua'], 1);
+                $this->log('  饱食度日志 ' . ($this->foodDebug ? '开启' : '关闭'));
+                break;
+
             case 'xp':
                 // /xp <数量> 加经验（原版写法），不带参数则显示当前值
                 if (isset($parts[1]) && is_numeric($parts[1])) {
@@ -3826,6 +3838,10 @@ final class Server
             }
             $f->lastFoodTick = $now;
 
+            if ($this->foodDebug) {
+                $this->log(sprintf('  [食物] %s 结算：饱食 %d 饱和 %.1f 血 %.1f',
+                    $f->username, $f->food, $f->saturation, $f->health));
+            }
             if ($f->food >= 18 && $f->health > 0 && $f->health < 20.0) {
                 $f->health = min(20.0, $f->health + 1.0);
                 $f->send(self::C_UPDATE_HEALTH, (new Writer())
@@ -3841,6 +3857,10 @@ final class Server
     {
         if ($c->gamemode === 1) {
             return;
+        }
+        if ($this->foodDebug) {
+            $this->log(sprintf('  [食物] %s 消耗 +%.2f（当前消耗度 %.2f 饱食 %d 饱和 %.1f）',
+                $c->username, $amount, $c->exhaustion, $c->food, $c->saturation));
         }
         $c->exhaustion += $amount;
         // 原版：消耗度攒满 4 点扣一次，先扣饱和度，扣完才扣饱食度
