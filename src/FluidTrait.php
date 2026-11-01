@@ -4,52 +4,29 @@ declare(strict_types=1);
 namespace PhpMc;
 
 /**
- * 流体：水(8/9) 和岩浆(10/11) 的扩散。
+ * 流体：逐格重算版（对齐 1.8.9 的 BlockDynamicLiquid 思路）。
  *
- * 规则照原版的大方向，但简化了两处：
- *  - 不处理「源头被拆掉之后回填」——只做往外流。
- *  - 不区分「流动方向衰减 1/2」的细节，只用层数。
+ * 核心变化：
+ *   1. 不再用「半径 8 扫描 + 删除孤立水」这种区域清理 —— 那会把整条河删光
+ *   2. 每个格子只重算自己：看邻居决定自己应该是几级水，变了就改、再通知邻居
+ *   3. 水源（静止水 9 / 静止岩浆 11，meta=0）不参与降级
+ *   4. 无限水：水平相邻 ≥2 个水源，且下方是固体（或同种 meta=0 水）
  *
- * 方块 id：8 = 静止水，9 = 流动水，10 = 静止岩浆，11 = 流动岩浆。
- * meta：0 是源头，1~7 是流动等级（越大越远），8 表示「从上面落下来」。
+ * ID 语义（已用 tools/audit_fluids.php 审计存档确认）：
+ *   8  = flowing_water   9  = water
+ *   10 = flowing_lava    11 = lava
  */
 trait FluidTrait
 {
-    /** @var array<int, array{0:int,1:int,2:int,3:int,4:int,5:int}> [x,y,z,种类,等级,已走格数] */
-    private array $fluidQueue = [];
+    private const FLUID_REACH = [0 => 7, 1 => 3];      // 水 7 格 / 岩浆 3 格
+    private const FLUID_TICK = 0.25;                    // 5 tick
 
+    /** @var array 待更新的流体格子 [x, y, z, kind] */
+    private array $fluidQueue = [];
+    /** @var array 去重 "x,y,z" => true */
+    private array $fluidQueued = [];
     private float $lastFluidTick = 0.0;
 
-    /** 水最远流 7 格、岩浆 3 格 */
-    private const FLUID_REACH = [0 => 7, 1 => 3];
-
-    /** 把一个流体方块丢进扩散队列。种类：0 水 / 1 岩浆 */
-    /**
-     * 入队一次流体更新。
-     * 注意 $depth：之前签名里没有这个参数，调用方传的第 6 个参数被 PHP 直接丢弃，
-     * 队列里永远写 0 —— 于是 FLUID_REACH（水 7 格 / 岩浆 3 格）从来没生效过。
-     */
-    private function startFluid(int $x, int $y, int $z, int $kind, int $level = 0, int $depth = 0): void
-    {
-        $this->fluidQueue[] = [$x, $y, $z, $kind, $level, $depth];
-    }
-
-    /** 放置流体方块时调用：先落地，再排队扩散 */
-    private function placeFluid(int $x, int $y, int $z, int $kind): void
-    {
-        // 原版水桶放的是 flowing_water(8)，稳定后才转成 water(9)
-        $this->changeBlock($x, $y, $z, $this->fluidFlowingId($kind), 0);
-        $this->startFluid($x, $y, $z, $kind, 0);
-    }
-
-    /**
-     * 1.8.9 的 ID 语义（已用 tools/audit_fluids.php 审计存档确认）：
-     *   8  = flowing_water（流动水）      9  = water（静止水）
-     *   10 = flowing_lava（流动岩浆）     11 = lava（静止岩浆）
-     * 我们之前写反了（把 8 当水源、9 当流动水），导致：
-     *   - 世界里的静止水(9) 被当成「待清理的流动水」
-     *   - 往水里放方块时的退潮把整条河删光
-     */
     private function fluidSourceId(int $kind): int
     {
         return $kind === 0 ? 9 : 11;
@@ -60,154 +37,243 @@ trait FluidTrait
         return $kind === 0 ? 8 : 10;
     }
 
-    /** 这个方块 id 是不是流体 */
-    private function isFluidId(int $id): bool
-    {
-        return $id === 8 || $id === 9 || $id === 10 || $id === 11;
-    }
-
     private function fluidKindOf(int $id): int
     {
         return ($id === 10 || $id === 11) ? 1 : 0;
     }
 
-    /** 每 tick 处理一批，避免一次性刷爆网络 */
+    private function isFluidId(int $id): bool
+    {
+        return $id === 8 || $id === 9 || $id === 10 || $id === 11;
+    }
+
+    /** 流水能不能挤掉这个方块 */
+    private function fluidCanReplace(int $id): bool
+    {
+        if ($id === 0) {
+            return true;
+        }
+        if ($this->isFluidId($id)) {
+            return true;
+        }
+
+        // 原版可被水冲掉的非固体方块
+        return in_array($id, [31, 32, 37, 38, 39, 40, 50, 51, 78, 106, 111, 132, 175], true);
+    }
+
+    private function blockStateAt(int $x, int $y, int $z): int
+    {
+        if ($y < 0 || $y > 255) {
+            return -1;
+        }
+
+        return $this->world->chunk($x >> 4, $z >> 4)->blockState($x & 15, $y, $z & 15);
+    }
+
+    /** 放进队列（同一个格子只排一次） */
+    private function startFluid(int $x, int $y, int $z, int $kind, int $level = 0, int $depth = 0): void
+    {
+        $key = $x . ',' . $y . ',' . $z;
+        if (isset($this->fluidQueued[$key])) {
+            return;
+        }
+        $this->fluidQueued[$key] = true;
+        $this->fluidQueue[] = [$x, $y, $z, $kind];
+    }
+
+    /** 水桶放水：原版放的是流动水，稳定后才变静止水 */
+    private function placeFluid(int $x, int $y, int $z, int $kind): void
+    {
+        $this->changeBlock($x, $y, $z, $this->fluidFlowingId($kind), 0);
+        $this->startFluid($x, $y, $z, $kind);
+        $this->notifyFluidNeighbors($x, $y, $z, $kind);
+    }
+
+    private function notifyFluidNeighbors(int $x, int $y, int $z, int $kind): void
+    {
+        $this->startFluid($x, $y + 1, $z, $kind);
+        $this->startFluid($x, $y - 1, $z, $kind);
+        foreach ([[1, 0], [-1, 0], [0, 1], [0, -1]] as [$dx, $dz]) {
+            $this->startFluid($x + $dx, $y, $z + $dz, $kind);
+        }
+    }
+
     private function tickFluids(float $now): void
     {
-        if ($this->fluidQueue === [] || $now - $this->lastFluidTick < 0.25) {
+        if ($this->fluidQueue === [] || $now - $this->lastFluidTick < self::FLUID_TICK) {
             return;
         }
         $this->lastFluidTick = $now;
 
-        $budget = 64;
+        $budget = 200;
         while ($budget-- > 0 && $this->fluidQueue !== []) {
-            [$x, $y, $z, $kind, $level, $depth] = array_shift($this->fluidQueue);
-            $this->flowFrom($x, $y, $z, $kind, $level, $depth);
+            [$x, $y, $z, $kind] = array_shift($this->fluidQueue);
+            unset($this->fluidQueued[$x . ',' . $y . ',' . $z]);
+            $this->updateFluidCell($x, $y, $z, $kind);
         }
+    }
+
+    /** 重算一个格子。返回是否发生了变化。 */
+    private function updateFluidCell(int $x, int $y, int $z, int $kind): bool
+    {
+        if ($y < 1 || $y > 255) {
+            return false;
+        }
+        $state = $this->blockStateAt($x, $y, $z);
+        if ($state < 0) {
+            return false;
+        }
+        $id = $state >> 4;
+        $meta = $state & 15;
+
+        $source = $this->fluidSourceId($kind);
+        $flowing = $this->fluidFlowingId($kind);
+
+        // 水源：永远不动，只负责往外扩散
+        if ($id === $source && $meta === 0) {
+            $this->spreadFrom($x, $y, $z, $kind, 0);
+
+            return false;
+        }
+
+        // 不是流动水 → 不用管（别的方块自己会触发邻居更新）
+        if ($id !== $flowing) {
+            return false;
+        }
+
+        $want = $this->computeLevel($x, $y, $z, $kind, $meta);
+
+        if ($want === null) {
+            // 没有来源支撑 → 干掉这一格，并让邻居重算（逐格退潮）
+            $this->changeBlock($x, $y, $z, 0, 0);
+            $this->notifyFluidNeighbors($x, $y, $z, $kind);
+
+            return true;
+        }
+
+        if ($want !== $meta) {
+            $this->changeBlock($x, $y, $z, $flowing, $want);
+        }
+
+        $this->spreadFrom($x, $y, $z, $kind, $want);
+
+        return $want !== $meta;
     }
 
     /**
-     * 回流：水源被拿掉后，流出去的水要退回去。
-     *
-     * 判定很简单 —— 一格流动水只有在「紧挨着水源」或「紧挨着更近一级的流动水」
-     * 时才站得住；否则就是孤立的，删掉。反复扫几轮，最远的水先退，形成逐格退潮。
+     * 计算某格流动水应该是几级（meta）。返回 null 表示「没有来源」→ 该删。
      */
-    private function recedeAround(int $x, int $y, int $z, int $kind): void
+    private function computeLevel(int $x, int $y, int $z, int $kind, int $current): ?int
     {
-        $source = $kind === 1 ? 10 : 8;
-        $flowing = $kind === 1 ? 11 : 9;
-        $R = 8;
+        $source = $this->fluidSourceId($kind);
+        $flowing = $this->fluidFlowingId($kind);
+        $reach = self::FLUID_REACH[$kind];
 
-        for ($pass = 0; $pass < 8; $pass++) {
-            $changed = false;
-            for ($dx = -$R; $dx <= $R; $dx++) {
-                for ($dz = -$R; $dz <= $R; $dz++) {
-                    for ($dy = -2; $dy <= 1; $dy++) {
-                        $cx = $x + $dx;
-                        $cy = $y + $dy;
-                        $cz = $z + $dz;
-                        if ($cy < 1 || $cy > 255) {
-                            continue;
-                        }
-                        $chunk = $this->world->chunk($cx >> 4, $cz >> 4);
-                        $state = $chunk->blockState($cx & 15, $cy, $cz & 15);
-                        if (($state >> 4) !== $flowing) {
-                            continue;
-                        }
-                        $myMeta = $state & 15;
+        // ① 正上方是同种流体 → 这一格是「落下来的水」
+        $above = $this->blockStateAt($x, $y + 1, $z);
+        if ($above >= 0 && $this->isFluidId($above >> 4) && $this->fluidKindOf($above >> 4) === $kind) {
+            $am = $above & 15;
 
-                        // 紧挨着水源就站得住
-                        $held = false;
-                        foreach ([[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, 0, 1], [0, 0, -1]] as [$ax, $ay, $az]) {
-                            $nb = $this->world->chunk(($cx + $ax) >> 4, ($cz + $az) >> 4)
-                                ->blockState(($cx + $ax) & 15, $cy + $ay, ($cz + $az) & 15);
-                            $nid = $nb >> 4;
-                            $nmeta = $nb & 15;
-                            if ($nid === $source) {
-                                $held = true;
-                                break;
-                            }
-                            if ($nid === $flowing && $nmeta < $myMeta) {
-                                $held = true;
-                                break;
-                            }
-                        }
-                        if ($held) {
-                            continue;
-                        }
+            return min(15, $am >= 8 ? $am : $am + 8);
+        }
 
-                        $this->changeBlock($cx, $cy, $cz, 0, 0);
-                        $changed = true;
-                    }
-                }
+        // ② 水平方向找最近来源
+        $best = null;
+        foreach ([[1, 0], [-1, 0], [0, 1], [0, -1]] as [$dx, $dz]) {
+            $nb = $this->blockStateAt($x + $dx, $y, $z + $dz);
+            if ($nb < 0) {
+                continue;
             }
-            if (!$changed) {
-                return;
+            $nid = $nb >> 4;
+            $nm = $nb & 15;
+            if ($nid === $source || ($nid === $flowing && $nm === 0)) {
+                $best = 0;
+
+                continue;
+            }
+            if ($nid === $flowing && $nm < $reach) {
+                $best = $best === null ? $nm : min($best, $nm);
             }
         }
+
+        if ($best === null) {
+            return null;
+        }
+        $want = $best + 1;
+
+        return $want > $reach ? null : $want;
     }
 
-    private function flowFrom(int $x, int $y, int $z, int $kind, int $level, int $depth): void
+    /** 从一个格子往外扩散 */
+    private function spreadFrom(int $x, int $y, int $z, int $kind, int $meta): void
     {
-        $max = self::FLUID_REACH[$kind];
-        $flowId = $this->fluidFlowingId($kind);
+        $flowing = $this->fluidFlowingId($kind);
+        $source = $this->fluidSourceId($kind);
+        $reach = self::FLUID_REACH[$kind];
 
-        // ① 先看下面：能落就落，落下去等级重置为 0
+        // ① 往下：下面能替换就落下去（meta 8 = 从上方落下）
         if ($y > 1) {
-            $belowId = $this->world->chunk($x >> 4, $z >> 4)
-                ->blockState($x & 15, $y - 1, $z & 15) >> 4;
-            if ($belowId === 0) {
-                $this->changeBlock($x, $y - 1, $z, $flowId, 8);   // meta 8 = 从上往下
-                $this->startFluid($x, $y - 1, $z, $kind, 0, $depth + 1);
+            $below = $this->blockStateAt($x, $y - 1, $z);
+            if ($below >= 0) {
+                $bid = $below >> 4;
+                $sameFluid = $this->isFluidId($bid) && $this->fluidKindOf($bid) === $kind;
+                if (!$sameFluid && $this->fluidCanReplace($bid)) {
+                    $this->changeBlock($x, $y - 1, $z, $flowing, 8);
+                    $this->startFluid($x, $y - 1, $z, $kind);
 
-                return;
-            }
-            // 下面是同种流体就不重复处理，免得死循环
-            if ($this->isFluidId($belowId) && $this->fluidKindOf($belowId) === $kind) {
-                // 继续横向
+                    return;          // 原版：能往下就不再横向扩
+                }
             }
         }
 
-        // ② 横向扩散
-        if ($depth >= $max) {
+        // ② 横向
+        if ($meta >= $reach) {
             return;
         }
-        $next = $level + 1;
-        if ($next > 7) {
-            return;
-        }
+        $next = ($meta >= 8) ? 1 : $meta + 1;      // 落下来的水横向从头算
+
         foreach ([[1, 0], [-1, 0], [0, 1], [0, -1]] as [$dx, $dz]) {
             $nx = $x + $dx;
             $nz = $z + $dz;
-            $nid = $this->world->chunk($nx >> 4, $nz >> 4)
-                ->blockState($nx & 15, $y, $nz & 15) >> 4;
-            if ($nid !== 0) {
+            $nb = $this->blockStateAt($nx, $y, $nz);
+            if ($nb < 0) {
                 continue;
             }
-            // 已经是同等级的水流就别再写一遍，否则每拍都触发邻居更新/物理检查
-            $same = $this->world->chunk($nx >> 4, $nz >> 4)
-                ->blockState($nx & 15, $y, $nz & 15);
-            if (($same >> 4) === $flowId && ($same & 15) === $next) {
-                continue;
-            }
-            $this->changeBlock($nx, $y, $nz, $flowId, $next);
-            $this->startFluid($nx, $y, $nz, $kind, $next, $depth + 1);
+            $nid = $nb >> 4;
+            $nm = $nb & 15;
 
-            // 原版规则：流动水如果水平方向紧挨着**两个水源**，自己就变成水源。
-            // 少了这条，挖出来的水坑永远不会「填满成完整水面」。
-            if ($kind === 0) {
-                $src = 0;
-                foreach ([[1, 0], [-1, 0], [0, 1], [0, -1]] as [$ax, $az]) {
-                    $nb = $this->world->chunk(($nx + $ax) >> 4, ($nz + $az) >> 4)
-                        ->blockState(($nx + $ax) & 15, $y, ($nz + $az) & 15) >> 4;
-                    if ($nb === $this->fluidSourceId(0)) {   // 9 = 静止水才算水源
-                        $src++;
-                    }
+            if ($this->isFluidId($nid) && $this->fluidKindOf($nid) === $kind) {
+                // 已有的水：让它自己重算（可能该更浅 / 该退）
+                if ($nid === $flowing && $nm > $next) {
+                    $this->startFluid($nx, $y, $nz, $kind);
                 }
-                if ($src >= 2) {
-                    // 只升级成水源，**不要**再 startFluid —— 否则新水源又扩散一轮，
-                    // 水流永远停不下来（就是你看到的「填上源头还在流」）。
-                    $this->changeBlock($nx, $y, $nz, $this->fluidSourceId(0), 0);
+
+                continue;
+            }
+            if (!$this->fluidCanReplace($nid)) {
+                continue;
+            }
+
+            $this->changeBlock($nx, $y, $nz, $flowing, $next);
+            $this->startFluid($nx, $y, $nz, $kind);
+        }
+
+        // ③ 无限水：相邻 ≥2 个水源，且下方是固体或同种水源
+        if ($kind === 0) {
+            $srcCount = 0;
+            foreach ([[1, 0], [-1, 0], [0, 1], [0, -1]] as [$dx, $dz]) {
+                $nb = $this->blockStateAt($x + $dx, $y, $z + $dz);
+                if ($nb >= 0 && ($nb >> 4) === $source && ($nb & 15) === 0) {
+                    $srcCount++;
+                }
+            }
+            if ($srcCount >= 2) {
+                $b = $this->blockStateAt($x, $y - 1, $z);
+                $bid = $b >= 0 ? $b >> 4 : 0;
+                $solidBelow = $bid !== 0 && !$this->isFluidId($bid);
+                $waterBelow = $bid === $source && ($b & 15) === 0;
+                if ($solidBelow || $waterBelow) {
+                    $this->changeBlock($x, $y, $z, $source, 0);
                 }
             }
         }
