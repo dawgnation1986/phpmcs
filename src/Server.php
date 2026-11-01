@@ -1667,8 +1667,10 @@ final class Server
                     // 打火石（259）：在点到的位置放火（51），并扣 1 点耐久
                     $cur = $this->world->chunk($tx >> 4, $tz >> 4)
                         ->blockState($tx & 15, $ty, $tz & 15);
-                    // 点的是黑曜石 → 先试试点燃地狱门
-                    if (($cur >> 4) === 49 && $this->tryIgnitePortal($c, $tx, $ty, $tz)) {
+                    // 【不管点的是什么，先试试点燃地狱门】
+                    // 玩家点的是框「内部那格空气」（点的面是底部黑曜石的上表面），
+                    // 之前要求「目标格是黑曜石」才试，于是永远点不着，只生成火。
+                    if ($this->tryIgnitePortal($c, $tx, $ty, $tz)) {
                         if ($c->gamemode !== 1) {
                             $hs2 = 36 + $c->heldSlot;
                             $h2 = $c->inventory[$hs2] ?? null;
