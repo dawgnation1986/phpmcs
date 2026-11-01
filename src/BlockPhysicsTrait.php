@@ -70,6 +70,12 @@ trait BlockPhysicsTrait
         return $chunk->blockState($x & 15, $y, $z & 15) & 15;
     }
 
+    /** 重力方块能不能落进这个方块（原版 canFallInto：空气/火/水/岩浆） */
+    private function canFallInto(int $id): bool
+    {
+        return $id === 0 || $id === 51 || $id === 8 || $id === 9 || $id === 10 || $id === 11;
+    }
+
     /** 这个方块现在站得住吗（对应 canBlockStay） */
     private function canStay(int $id, int $x, int $y, int $z): bool
     {
@@ -166,7 +172,7 @@ trait BlockPhysicsTrait
             // 【注意】这段以前被放在下面那个 `foreach ([] as ...)` 里（空数组），
             // 等于从来没执行过 —— 沙子永远不掉就是这个原因。
             if ($id0 > 0 && in_array($id0, self::FALLING_BLOCKS, true)
-                && $this->blockIdAt($tx, $ty - 1, $tz) === 0) {
+                && $this->canFallInto($this->blockIdAt($tx, $ty - 1, $tz))) {
                 $this->falling[$tx . ',' . $ty . ',' . $tz] = microtime(true) + 0.12;
                 $this->log("  排队下落：{$id0} @ {$tx},{$ty},{$tz}");
             }

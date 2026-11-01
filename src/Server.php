@@ -3613,6 +3613,39 @@ final class Server
                 $this->sendChat($c, ['text' => $rows === [] ? '背包是空的' : implode(' ', $rows), 'color' => 'aqua'], 1);
                 break;
 
+            case 'fluidfix':
+                // 手动重算周围的水（半径 16）。改完流体逻辑后不用重建世界，
+                // 敲一下就能让附近所有水/岩浆格子重新判断自己该不该留。
+                $fr = ($arg === '' || !is_numeric($arg)) ? 16 : (int) $arg;
+                $fr = max(4, min(48, $fr));
+                $cnt = 0;
+                $px = (int) floor($c->x);
+                $py = (int) floor($c->y);
+                $pz = (int) floor($c->z);
+                for ($dx = -$fr; $dx <= $fr; $dx++) {
+                    for ($dz = -$fr; $dz <= $fr; $dz++) {
+                        for ($dy = -8; $dy <= 8; $dy++) {
+                            $y2 = $py + $dy;
+                            if ($y2 < 1 || $y2 > 255) {
+                                continue;
+                            }
+                            $st = $this->world->chunk(($px + $dx) >> 4, ($pz + $dz) >> 4)
+                                ->blockState(($px + $dx) & 15, $y2, ($pz + $dz) & 15);
+                            $fid = $st >> 4;
+                            if ($fid === 8 || $fid === 9) {
+                                $this->startFluid($px + $dx, $y2, $pz + $dz, 0);
+                                $cnt++;
+                            } elseif ($fid === 10 || $fid === 11) {
+                                $this->startFluid($px + $dx, $y2, $pz + $dz, 1);
+                                $cnt++;
+                            }
+                        }
+                    }
+                }
+                $this->sendChat($c, ['text' => "已把 {$cnt} 格水/岩浆排进重算队列", 'color' => 'aqua'], 1);
+                $this->log("  /fluidfix 半径 {$fr} 排队 {$cnt} 格");
+                break;
+
             case 'foodlog':
                 $this->foodDebug = !$this->foodDebug;
                 $this->sendChat($c, ['text' => '饱食度日志：' . ($this->foodDebug ? '已开启' : '已关闭'),
