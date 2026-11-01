@@ -185,11 +185,14 @@ trait AnvilTrait
 
                 return;
             }
-            $this->giveItem($c, (int) $out['id'], (int) $out['count'], (int) ($out['damage'] ?? 0),
+            // 【只给 1 个】产物里继承了输入槽的 count（比如 14 根线），
+            // 如果整组发出去、却只扣每格 1 个，玩家就会「放 14 根、拿回 14 根还扣了 1」——
+            // 净赚 13。原版铁砧一次只出一个成品。
+            $this->giveItem($c, (int) $out['id'], 1, (int) ($out['damage'] ?? 0),
                 empty($out['ench']) ? [] : ['ench' => $out['ench']]);
             $this->consumeAnvilSlot($c, 'slot0');
             $this->consumeAnvilSlot($c, 'slot1');
-            $this->log("  {$c->username} 铁砧取出 " . $out['id'] . 'x' . $out['count']);
+            $this->log("  {$c->username} 铁砧取出 " . $out['id'] . 'x1');
             $this->sendAnvilWindow($c);
             $this->sendCursor($c);
 
