@@ -32,99 +32,137 @@ trait PortalTrait
     private bool $netherBuilt = false;
     private float $lastPortalTick = 0.0;
 
-    /** 打火石点黑曜石：试着点燃一个门 */
+    /**
+     * 从「火所在的那一格」向四周探，找出黑曜石框并填传送门。
+     *
+     * 原版允许 2×3（最小）到 21×21 的内部尺寸，所以不能写死尺寸，
+     * 要顺着一个方向走到黑曜石边界，再验证四条边。
+     */
     private function tryIgnitePortal(Connection $c, int $x, int $y, int $z): bool
     {
-        // 点的那一格本身是黑曜石，框有可能在它四周
         foreach (['x', 'z'] as $axis) {
-            for ($w = 2; $w <= 2; $w++) {          // 原版内部 2 格宽
-                for ($h = 3; $h <= 3; $h++) {      // 3 格高
-                    for ($ox = -2; $ox <= 2; $ox++) {
-                        for ($oy = -3; $oy <= 1; $oy++) {
-                            if ($this->frameAt($x, $y, $z, $axis, $w, $h, $ox, $oy)) {
-                                $this->fillPortal($c, $x, $y, $z, $axis, $w, $h, $ox, $oy);
-
-                                return true;
-                            }
-                        }
-                    }
+            $r = $this->probeFrame($x, $y, $z, $axis);
+            if ($r === null) {
+                continue;
+            }
+            [$x0, $y0, $z0, $w, $h] = $r;
+            $meta = $axis === 'x' ? 1 : 2;
+            for ($i = 0; $i < $w; $i++) {
+                for ($j = 0; $j < $h; $j++) {
+                    $this->changeBlock(
+                        $axis === 'x' ? $x0 + $i : $x0,
+                        $y0 + $j,
+                        $axis === 'z' ? $z0 + $i : $z0,
+                        self::PORTAL_BLOCK,
+                        $meta
+                    );
                 }
             }
+            $this->log("  {$c->username} 点燃地狱门 @ {$x0},{$y0},{$z0} 轴={$axis} 内部={$w}x{$h}");
+            $this->sendChat($c, ['text' => '地狱门被点燃了。', 'color' => 'light_purple'], 1);
+
+            return true;
         }
 
         return false;
     }
 
-    /** 以 (x,y,z) 为参考，检查某个偏移下是不是合法黑曜石框 */
-    private function frameAt(int $x, int $y, int $z, string $axis, int $w, int $h, int $ox, int $oy): bool
+    /**
+     * 以 (x,y,z) 为内部一格，沿 axis 方向探边界。
+     * 返回 [x0,y0,z0,内宽,内高]，不合法返回 null。
+     */
+    private function probeFrame(int $x, int $y, int $z, string $axis): ?array
     {
-        $x0 = $x + ($axis === 'x' ? $ox : 0);
-        $y0 = $y + $oy;
-        $z0 = $z + ($axis === 'z' ? $ox : 0);
+        $at = function (int $i, int $j) use ($x, $y, $z, $axis): int {
+            return $this->blockIdAt(
+                $axis === 'x' ? $x + $i : $x,
+                $y + $j,
+                $axis === 'z' ? $z + $i : $z
+            );
+        };
 
-        // 内部必须是空气（或已经是传送门）
-        for ($i = 0; $i < $w; $i++) {
-            for ($j = 0; $j < $h; $j++) {
-                $id = $this->blockIdAt(
-                    $axis === 'x' ? $x0 + $i : $x0,
-                    $y0 + $j,
-                    $axis === 'z' ? $z0 + $i : $z0
-                );
-                if ($id !== 0 && $id !== self::PORTAL_BLOCK) {
-                    return false;
-                }
+        // ① 左右（沿水平轴）找黑曜石边界
+        $left = null;
+        for ($i = -1; $i >= -21; $i--) {
+            $id = $at($i, 0);
+            if ($id === self::OBSIDIAN) {
+                $left = $i;
+                break;
+            }
+            if ($id !== 0 && $id !== self::PORTAL_BLOCK) {
+                return null;
+            }
+        }
+        $right = null;
+        for ($i = 1; $i <= 21; $i++) {
+            $id = $at($i, 0);
+            if ($id === self::OBSIDIAN) {
+                $right = $i;
+                break;
+            }
+            if ($id !== 0 && $id !== self::PORTAL_BLOCK) {
+                return null;
+            }
+        }
+        if ($left === null || $right === null) {
+            return null;
+        }
+        $w = $right - $left - 1;
+        if ($w < 2) {
+            return null;
+        }
+
+        // ② 上下找黑曜石边界
+        $down = null;
+        for ($j = -1; $j >= -21; $j--) {
+            $id = $at(0, $j);
+            if ($id === self::OBSIDIAN) {
+                $down = $j;
+                break;
+            }
+            if ($id !== 0 && $id !== self::PORTAL_BLOCK) {
+                return null;
+            }
+        }
+        $up = null;
+        for ($j = 1; $j <= 21; $j++) {
+            $id = $at(0, $j);
+            if ($id === self::OBSIDIAN) {
+                $up = $j;
+                break;
+            }
+            if ($id !== 0 && $id !== self::PORTAL_BLOCK) {
+                return null;
+            }
+        }
+        if ($down === null || $up === null) {
+            return null;
+        }
+        $h = $up - $down - 1;
+        if ($h < 3) {
+            return null;
+        }
+
+        // ③ 验证四条边全是黑曜石
+        for ($i = $left + 1; $i < $right; $i++) {
+            if ($at($i, $down) !== self::OBSIDIAN || $at($i, $up) !== self::OBSIDIAN) {
+                return null;
+            }
+        }
+        for ($j = $down + 1; $j < $up; $j++) {
+            if ($at($left, $j) !== self::OBSIDIAN || $at($right, $j) !== self::OBSIDIAN) {
+                return null;
             }
         }
 
-        // 四条边必须是黑曜石
-        for ($i = -1; $i <= $w; $i++) {
-            foreach ([-1, $h] as $j) {
-                $id = $this->blockIdAt(
-                    $axis === 'x' ? $x0 + $i : $x0,
-                    $y0 + $j,
-                    $axis === 'z' ? $z0 + $i : $z0
-                );
-                if ($id !== self::OBSIDIAN) {
-                    return false;
-                }
-            }
-        }
-        for ($j = 0; $j < $h; $j++) {
-            foreach ([-1, $w] as $i) {
-                $id = $this->blockIdAt(
-                    $axis === 'x' ? $x0 + $i : $x0,
-                    $y0 + $j,
-                    $axis === 'z' ? $z0 + $i : $z0
-                );
-                if ($id !== self::OBSIDIAN) {
-                    return false;
-                }
-            }
-        }
-
-        return true;
-    }
-
-    private function fillPortal(Connection $c, int $x, int $y, int $z, string $axis, int $w, int $h, int $ox, int $oy): void
-    {
-        $x0 = $x + ($axis === 'x' ? $ox : 0);
-        $y0 = $y + $oy;
-        $z0 = $z + ($axis === 'z' ? $ox : 0);
-        $meta = $axis === 'x' ? 1 : 2;
-
-        for ($i = 0; $i < $w; $i++) {
-            for ($j = 0; $j < $h; $j++) {
-                $this->changeBlock(
-                    $axis === 'x' ? $x0 + $i : $x0,
-                    $y0 + $j,
-                    $axis === 'z' ? $z0 + $i : $z0,
-                    self::PORTAL_BLOCK,
-                    $meta
-                );
-            }
-        }
-        $this->log("  {$c->username} 点燃地狱门 @ {$x0},{$y0},{$z0} 轴={$axis}");
-        $this->sendChat($c, ['text' => '地狱门被点燃了。', 'color' => 'light_purple'], 1);
+        // 原点 = 内部左下角（相对坐标）
+        return [
+            $axis === 'x' ? $x + $left + 1 : $x,
+            $y + $down + 1,
+            $axis === 'z' ? $z + $left + 1 : $z,
+            $w,
+            $h,
+        ];
     }
 
     /** 每 0.5 秒：站在门里 2 秒就传送 */
