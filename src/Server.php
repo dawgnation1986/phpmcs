@@ -111,6 +111,10 @@ final class Connection
     public int $heldSlot = 0;
     public float $health = 20.0;
     public int $food = 20;
+    /** 上一次同步给客户端的血量/饱食度/是否饥饿，用于「只在变化时发包」 */
+    public float $lastHealth = -1.0;
+    public int $lastFood = -1;
+    public bool $wasHungry = false;
     /** 饱和度：吃东西先加这个，消耗时先扣它（原版机制） */
     public float $saturation = 5.0;
     /** 回血/饿伤的计时器（秒） */
@@ -3838,8 +3842,7 @@ final class Server
         $mod = self::FOOD_SAT[$itemId] ?? 0.6;
         $c->saturation = min((float) $c->food, $c->saturation + $food * $mod * 2.0);
         $c->health = min(20.0, $c->health + 1.0);
-        $c->send(self::C_UPDATE_HEALTH, (new Writer())
-            ->float($c->health)->varInt($c->food)->float($c->saturation));
+        $this->syncVitals($c);
         $this->log("  {$c->username} 吃了方块{$itemId}，饱食度 {$c->food}，血 {$c->health}");
     }
 
@@ -3870,8 +3873,7 @@ final class Server
                 if ($this->foodDebug) {
                     $this->log(sprintf('  [食物] %s 回血 +1 -> %.1f', $f->username, $f->health));
                 }
-                $f->send(self::C_UPDATE_HEALTH, (new Writer())
-                    ->float($f->health)->varInt($f->food)->float($f->saturation));
+                $this->syncVitals($f);
                 $this->addExhaustion($f, 3.0);   // 回血本身也消耗
             } elseif ($f->food <= 0 && $f->health > 1.0) {
                 $this->damage($f, 1);            // 饿伤（普通难度不致命）
@@ -3886,6 +3888,27 @@ final class Server
      * 之前我一直发 0x0A 填 -1，那是「进入床铺」的包，方向用错了 ——
      * 客户端只会更混乱，人永远起不来。
      */
+    /**
+     * 同步血量 / 饱食度 / 饱和度。
+     * 原版 EntityPlayerMP 只在「血量变了 || 饱食度变了 || 是否饥饿变了」时才发 0x06，
+     * 不是定时刷 —— 定时刷会让客户端的饥饿条反复重设，看起来一抖一抖的。
+     */
+    private function syncVitals(Connection $c, bool $force = false): void
+    {
+        $hungry = $c->saturation <= 0.0;
+        if (!$force
+            && $c->lastHealth === $c->health
+            && $c->lastFood === $c->food
+            && $c->wasHungry === $hungry) {
+            return;
+        }
+        $c->send(self::C_UPDATE_HEALTH, (new Writer())
+            ->float($c->health)->varInt($c->food)->float($c->saturation));
+        $c->lastHealth = $c->health;
+        $c->lastFood = $c->food;
+        $c->wasHungry = $hungry;
+    }
+
     private function wakePlayer(Connection $c): void
     {
         foreach ($this->players() as $p) {
@@ -3921,8 +3944,7 @@ final class Server
             } else {
                 break;
             }
-            $c->send(self::C_UPDATE_HEALTH, (new Writer())
-                ->float($c->health)->varInt($c->food)->float($c->saturation));
+            $this->syncVitals($c);
         }
     }
 
@@ -3963,10 +3985,7 @@ final class Server
 
     private function sendHealth(Connection $c): void
     {
-        $c->send(self::C_UPDATE_HEALTH, (new Writer())
-            ->float($c->health)
-            ->varInt($c->food)
-            ->float($c->saturation));
+        $this->syncVitals($c);
     }
 
     /** 发送窗口里的一个槽位（null = 空槽） */
@@ -4737,8 +4756,7 @@ final class Server
         }
         $c->health = max(0.0, $c->health - $dmg);
         $this->addExhaustion($c, 0.3);   // 原版：每次受伤 0.3
-        $c->send(self::C_UPDATE_HEALTH, (new Writer())
-            ->float($c->health)->varInt($c->food)->float($c->saturation));
+        $this->syncVitals($c);
         $this->log("  {$c->username} 掉血 {$dmg}，剩 {$c->health}");
 
         if ($c->health <= 0.0) {
