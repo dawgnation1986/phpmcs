@@ -184,8 +184,14 @@ trait AnvilTrait
             return;
         }
 
-        // 背包槽（9~44）：交给普通背包点击
-        $this->clickInventory($c, $slot, $button, $mode, $cursor);
+        // 背包槽：铁砧窗口的编号是
+        //   0/1 输入、2 产物、3~29 主背包、30~38 快捷栏
+        // 而 clickInventory 用的是「背包下标」（9~44）。
+        // 两套编号差 6，直接传会让点击落到错误的格子上 —— 表现就是「东西放不上去」。
+        if ($slot >= 3) {
+            $invSlot = $slot + 6;              // 3 -> 9, 30 -> 36 ✓
+            $this->clickInventory($c, $invSlot, $button, $mode, $cursor);
+        }
         $this->sendAnvilWindow($c);
     }
 
