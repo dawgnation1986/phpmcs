@@ -63,19 +63,22 @@ trait AnvilTrait
         if ($c->anvil === null) {
             return;
         }
+        // 只推铁砧自己的 3 个槽。
+        // 之前把 39 个槽（含背包）一起推给 windowId=8，但背包那段编号映射
+        // 和客户端的不一致 —— 客户端会用这份数据覆盖背包显示，
+        // 表现就是「从铁砧拿出来的东西放进背包后消失了」。
+        // 背包统一走 sendPlayerInventory（window 0）。
         $slots = [
             $c->anvil['slot0'],
             $c->anvil['slot1'],
             $this->anvilResult($c),
         ];
-        for ($i = 9; $i <= 44; $i++) {
-            $slots[] = $c->inventory[$i] ?? null;
-        }
         $w = (new Writer())->byte(8)->short(count($slots));
         foreach ($slots as $it) {
             $w->raw($this->slotBytes($it));
         }
         $c->send(self::C_WINDOW_ITEMS, $w);
+        $this->sendPlayerInventory($c);
     }
 
     /** 算产物：叠加耐久 / 合并附魔 / 单件透传 */
