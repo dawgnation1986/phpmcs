@@ -2121,7 +2121,9 @@ final class Server
     /** 草、花、雪层这些原版可以直接盖掉的方块 */
     private static function isReplaceable(int $id): bool
     {
-        return in_array($id, [31, 32, 37, 38, 39, 40, 51, 78, 106, 111, 175], true);
+        // 水/岩浆也算「可替换」：原版往流动水里放方块是直接顶掉水的，
+        // 之前没列进来，放置会被拒 → 客户端把方块又弹回去。
+        return in_array($id, [8, 9, 10, 11, 31, 32, 37, 38, 39, 40, 51, 78, 106, 111, 175], true);
     }
 
     /** 打碎方块：广播 + 掉东西 */
@@ -2287,6 +2289,17 @@ final class Server
         }
         $this->broadcastBlockChange($x, $y, $z, 0);
         $this->markSection($x, $y, $z);
+
+        // 破坏方块是直写 chunk 的（不经过 changeBlock），所以这里必须自己触发
+        // 邻居更新 —— 否则上面的沙子不会掉、甘蔗不会跟着掉。
+        if (!$this->inNeighborUpdate) {
+            $this->inNeighborUpdate = true;
+            try {
+                $this->neighborUpdate($x, $y, $z);
+            } finally {
+                $this->inNeighborUpdate = false;
+            }
+        }
 
         // 创造模式不掉落（原版行为）
         if ($c->gamemode === 1) {
