@@ -3971,6 +3971,8 @@ final class Server
             && $c->wasHungry === $hungry) {
             return;
         }
+        $this->log(sprintf('  [0x06] %s health=%.1f food=%d saturation=%.2f',
+            $c->username, $c->health, $c->food, $c->saturation));
         $c->send(self::C_UPDATE_HEALTH, (new Writer())
             ->float($c->health)->varInt($c->food)->float($c->saturation));
         $c->lastHealth = $c->health;
