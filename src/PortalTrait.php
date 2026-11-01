@@ -90,6 +90,7 @@ trait PortalTrait
                 break;
             }
             if ($id !== 0 && $id !== self::PORTAL_BLOCK) {
+                $this->log("  [门] 轴={$axis} 左侧第 {$i} 格是 {$id}，不是空气也不是黑曜石");
                 return null;
             }
         }
@@ -105,10 +106,12 @@ trait PortalTrait
             }
         }
         if ($left === null || $right === null) {
+            $this->log("  [门] 轴={$axis} 找不到左右边框（left=" . ($left ?? 'null') . " right=" . ($right ?? 'null') . '）');
             return null;
         }
         $w = $right - $left - 1;
         if ($w < 2) {
+            $this->log("  [门] 轴={$axis} 内部只有 {$w} 格宽（最小 2）");
             return null;
         }
 
@@ -136,21 +139,25 @@ trait PortalTrait
             }
         }
         if ($down === null || $up === null) {
+            $this->log("  [门] 轴={$axis} 找不到上下边框（down=" . ($down ?? 'null') . " up=" . ($up ?? 'null') . '）');
             return null;
         }
         $h = $up - $down - 1;
         if ($h < 3) {
+            $this->log("  [门] 轴={$axis} 内部只有 {$h} 格高（最小 3）");
             return null;
         }
 
         // ③ 验证四条边全是黑曜石
         for ($i = $left + 1; $i < $right; $i++) {
             if ($at($i, $down) !== self::OBSIDIAN || $at($i, $up) !== self::OBSIDIAN) {
+                $this->log("  [门] 轴={$axis} 上下边第 {$i} 格不是黑曜石（下=" . $at($i, $down) . ' 上=' . $at($i, $up) . '）');
                 return null;
             }
         }
         for ($j = $down + 1; $j < $up; $j++) {
             if ($at($left, $j) !== self::OBSIDIAN || $at($right, $j) !== self::OBSIDIAN) {
+                $this->log("  [门] 轴={$axis} 左右边第 {$j} 格不是黑曜石（左=" . $at($left, $j) . ' 右=' . $at($right, $j) . '）');
                 return null;
             }
         }
