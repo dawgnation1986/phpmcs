@@ -136,12 +136,33 @@ trait BlockPhysicsTrait
      */
     private function neighborUpdate(int $x, int $y, int $z): void
     {
-        $targets = [[$x, $y, $z]];
-        foreach ([[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]] as [$dx, $dy, $dz]) {
-            $targets[] = [$x + $dx, $y + $dy, $z + $dz];
+        // 用队列而不是递归：之前靠 $inNeighborUpdate 挡递归，结果「掉一格触发
+        // 下一格」也被挡掉了，甘蔗只剩最上面一节会掉。现在自己维护待检查队列。
+        $queue = [[$x, $y, $z]];
+        for ($i = 0; $i < 512 && $queue !== []; $i++) {
+            [$tx, $ty, $tz] = array_shift($queue);
+            $id0 = $this->blockIdAt($tx, $ty, $tz);
+
+            if ($id0 > 0 && in_array($id0, self::NEEDS_SUPPORT, true)
+                && !$this->canStay($id0, $tx, $ty, $tz)) {
+                [$dropId, $count] = self::dropOf($id0, $this->blockMetaAt($tx, $ty, $tz));
+                if ($dropId > 0 && $count > 0) {
+                    $this->spawnDrop($tx, $ty, $tz, $dropId, $count, 0, null);
+                }
+                $this->log("  支撑失效：方块 {$id0} @ {$tx},{$ty},{$tz} 已掉落");
+                $this->changeBlock($tx, $ty, $tz, 0, 0);
+                // 自己这一格、上面那格（甘蔗/仙人掌会往上串）都要重新检查
+                $queue[] = [$tx, $ty, $tz];
+                $queue[] = [$tx, $ty + 1, $tz];
+            }
+
+            foreach ([[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]] as [$dx, $dy, $dz]) {
+                $queue[] = [$tx + $dx, $ty + $dy, $tz + $dz];
+            }
         }
 
-        foreach ($targets as [$tx, $ty, $tz]) {
+        // 下面这段是旧实现（保留结构便于对照），实际不再进入
+        foreach ([] as [$tx, $ty, $tz]) {
             $id = $this->blockIdAt($tx, $ty, $tz);
             if ($id <= 0) {
                 continue;
@@ -161,7 +182,7 @@ trait BlockPhysicsTrait
             // 重力方块：下面是空气就排队下落
             if (in_array($id, self::FALLING_BLOCKS, true) && $this->blockIdAt($tx, $ty - 1, $tz) === 0) {
                 $this->log("  排队下落：{$id} @ {$tx},{$ty},{$tz}");
-                $this->falling[$tx . ',' . $ty . ',' . $tz] = microtime(true) + 0.12;
+                $this->falling[$tx . ',' . $ty . ',' . $tz] = microtime(true) + 0.22;
             }
         }
     }
@@ -172,7 +193,7 @@ trait BlockPhysicsTrait
         if ($this->falling === []) {
             return;
         }
-        if ($now - $this->lastFallTick < 0.12) {
+        if ($now - $this->lastFallTick < 0.22) {
             return;
         }
         $this->lastFallTick = $now;
@@ -189,6 +210,11 @@ trait BlockPhysicsTrait
                 continue;
             }
             $below = $this->blockIdAt($fx, $fy - 1, $fz);
+            // 水和岩浆挡不住重力方块（原版会把它挤掉往下沉）
+            if ($below === 8 || $below === 9 || $below === 10 || $below === 11) {
+                $this->changeBlock($fx, $fy - 1, $fz, 0, 0);
+                $below = 0;
+            }
             if ($below !== 0 || $fy <= 0) {
                 continue;    // 落地了
             }
@@ -196,12 +222,12 @@ trait BlockPhysicsTrait
             $meta = $this->blockMetaAt($fx, $fy, $fz);
             $this->changeBlock($fx, $fy, $fz, 0, 0);
             $this->changeBlock($fx, $fy - 1, $fz, $id, $meta);
-            $this->falling[$fx . ',' . ($fy - 1) . ',' . $fz] = $now + 0.12;
+            $this->falling[$fx . ',' . ($fy - 1) . ',' . $fz] = $now + 0.22;
 
             // 上面那格如果是同类重力方块，也跟着掉（整列一起落，不是只掉最上面一个）
             $above = $this->blockIdAt($fx, $fy + 1, $fz);
             if (in_array($above, self::FALLING_BLOCKS, true)) {
-                $this->falling[$fx . ',' . ($fy + 1) . ',' . $fz] = $now + 0.12;
+                $this->falling[$fx . ',' . ($fy + 1) . ',' . $fz] = $now + 0.22;
             }
         }
     }

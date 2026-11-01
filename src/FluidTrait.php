@@ -173,6 +173,23 @@ trait FluidTrait
             }
             $this->changeBlock($nx, $y, $nz, $flowId, $next);
             $this->startFluid($nx, $y, $nz, $kind, $next, $depth + 1);
+
+            // 原版规则：流动水如果水平方向紧挨着**两个水源**，自己就变成水源。
+            // 少了这条，挖出来的水坑永远不会「填满成完整水面」。
+            if ($kind === 0) {
+                $src = 0;
+                foreach ([[1, 0], [-1, 0], [0, 1], [0, -1]] as [$ax, $az]) {
+                    $nb = $this->world->chunk(($nx + $ax) >> 4, ($nz + $az) >> 4)
+                        ->blockState(($nx + $ax) & 15, $y, ($nz + $az) & 15) >> 4;
+                    if ($nb === 8) {
+                        $src++;
+                    }
+                }
+                if ($src >= 2) {
+                    $this->changeBlock($nx, $y, $nz, 8, 0);   // 升级成水源
+                    $this->startFluid($nx, $y, $nz, 0, 0, 0);
+                }
+            }
         }
     }
 }
