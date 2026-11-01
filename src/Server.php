@@ -1576,6 +1576,39 @@ final class Server
                     break;
                 }
 
+                // 打火石(259) 不是方块：必须在「blockId<=0 就 break」之前处理，
+                // 否则永远走不到（它不在 PLACEABLE_ITEM 里，blockId 会算成 0）。
+                if ($itemId === 259) {
+                    [$ftx, $fty, $ftz] = self::offsetByFace($x, $y, $z, $face);
+                    if ($this->tryIgnitePortal($c, $ftx, $fty, $ftz)) {
+                        if ($c->gamemode !== 1) {
+                            $hs3 = 36 + $c->heldSlot;
+                            $h3 = $c->inventory[$hs3] ?? null;
+                            if (is_array($h3) && (int) $h3['id'] === 259) {
+                                $h3['damage'] = (int) ($h3['damage'] ?? 0) + 1;
+                                if ($h3['damage'] >= 65) {
+                                    unset($c->inventory[$hs3]);
+                                    $this->sendSlot($c, $hs3, null);
+                                } else {
+                                    $c->inventory[$hs3] = $h3;
+                                    $this->sendSlot($c, $hs3, $h3);
+                                }
+                            }
+                        }
+                        break;
+                    }
+                    $fcur = $this->world->chunk($ftx >> 4, $ftz >> 4)
+                        ->blockState($ftx & 15, $fty, $ftz & 15);
+                    if (($fcur >> 4) === 0) {
+                        $this->changeBlock($ftx, $fty, $ftz, 51, 0);
+                        if ($this->tryIgnitePortal($c, $ftx, $fty, $ftz)) {
+                            $this->changeBlock($ftx, $fty, $ftz, 0, 0);
+                        }
+                    }
+                    $this->log("  {$c->username} 打火石 @ {$ftx},{$fty},{$ftz}");
+                    break;
+                }
+
                 $blockId = $itemId <= 255 ? $itemId : (self::PLACEABLE_ITEM[$itemId] ?? 0);
                 if ($blockId <= 0) {
                     break; // 这个物品不能当方块放
