@@ -162,6 +162,15 @@ trait BlockPhysicsTrait
                 $queue[] = [$tx, $ty + 1, $tz];
             }
 
+            // 重力方块：下面是空气就排队下落。
+            // 【注意】这段以前被放在下面那个 `foreach ([] as ...)` 里（空数组），
+            // 等于从来没执行过 —— 沙子永远不掉就是这个原因。
+            if ($id0 > 0 && in_array($id0, self::FALLING_BLOCKS, true)
+                && $this->blockIdAt($tx, $ty - 1, $tz) === 0) {
+                $this->falling[$tx . ',' . $ty . ',' . $tz] = microtime(true) + 0.12;
+                $this->log("  排队下落：{$id0} @ {$tx},{$ty},{$tz}");
+            }
+
             foreach ([[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]] as [$dx, $dy, $dz]) {
                 $nx2 = $tx + $dx;
                 $ny2 = $ty + $dy;
@@ -174,30 +183,6 @@ trait BlockPhysicsTrait
             }
         }
 
-        // 下面这段是旧实现（保留结构便于对照），实际不再进入
-        foreach ([] as [$tx, $ty, $tz]) {
-            $id = $this->blockIdAt($tx, $ty, $tz);
-            if ($id <= 0) {
-                continue;
-            }
-
-            if (in_array($id, self::NEEDS_SUPPORT, true) && !$this->canStay($id, $tx, $ty, $tz)) {
-                [$dropId, $count] = self::dropOf($id, $this->blockMetaAt($tx, $ty, $tz));
-                if ($dropId > 0 && $count > 0) {
-                    $this->spawnDrop($tx, $ty, $tz, $dropId, $count, 0, null);
-                }
-                $this->log("  支撑失效：方块 {$id} @ {$tx},{$ty},{$tz} 已掉落");
-                $this->changeBlock($tx, $ty, $tz, 0, 0);
-
-                return;   // changeBlock 会再触发一轮，别在这里继续
-            }
-
-            // 重力方块：下面是空气就排队下落
-            if (in_array($id, self::FALLING_BLOCKS, true) && $this->blockIdAt($tx, $ty - 1, $tz) === 0) {
-                $this->log("  排队下落：{$id} @ {$tx},{$ty},{$tz}");
-                $this->falling[$tx . ',' . $ty . ',' . $tz] = microtime(true) + 0.22;
-            }
-        }
     }
 
     /** 下落：每 50ms 掉一格，掉到底或碰到实体方块就停下 */
