@@ -4247,12 +4247,20 @@ final class Server
      */
     private function sendCursor(Connection $c): void
     {
-        // 停用。1.8.9 客户端收到 windowId=-1 / slot=-1 的 Set Slot 时会走
-        // Container.getSlot(-1) → IndexOutOfBoundsException（日志里每次进服、
-        // 每次点击都有一条，length 45/46/63 分别对应背包/工作台/箱子）。
-        // 异常发生在主线程的 packet 批里，同一批后面的包直接不处理 ——
-        // 箱子的 0x35 就是这么被吞的。
-        // 光标由客户端自己维护，服务端不纠正它也不会崩，最多偶尔不同步。
+        // 用「当前窗口 id + slot=-1」同步光标（原版就是这么发的）。
+        // 之前直接停用，导致服务端认为光标空了、客户端还拿着东西 ——
+        // 表现就是「合出来的东西拿在手上，点背包放不进去」。
+        // 注意 windowId 必须是当前打开的窗口，不能写 0，否则客户端找不到容器。
+        $wid = 0;
+        if ($c->anvil !== null) {
+            $wid = 8;
+        } elseif ($c->workbench) {
+            $wid = 2;
+        } elseif ($c->furnace !== null || $c->chest !== null) {
+            $wid = 1;
+        }
+        $c->send(self::C_SET_SLOT, (new Writer())
+            ->byte($wid)->short(-1)->raw($this->slotBytes($c->cursor)));
     }
 
     /** 按当前打开的窗口，把玩家背包槽位换算成容器槽位再发 Set Slot */
