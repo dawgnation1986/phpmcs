@@ -111,6 +111,10 @@ final class Connection
     public int $heldSlot = 0;
     public float $health = 20.0;
     public int $food = 20;
+    /** 饱和度：吃东西先加这个，消耗时先扣它（原版机制） */
+    public float $saturation = 5.0;
+    /** 回血/饿伤的计时器（秒） */
+    public float $lastFoodTick = 0.0;
     /** 开始下落时的高度，落地时用来算摔伤 */
     public float $fallFrom = -1.0;   // <0 表示没在下落
     /** @var array<string, bool> 已经发过区块的 "cx,cz" */
@@ -3785,6 +3789,8 @@ final class Server
         }
 
         $c->food = min(20, $c->food + $food);
+        // 饱和度约等于回血量的 1.2 倍（原版按食物表，这里简化）
+        $c->saturation = min(20.0, $c->saturation + $food * 1.2);
         $c->health = min(20.0, $c->health + 1.0);
         $c->send(self::C_UPDATE_HEALTH, (new Writer())
             ->float($c->health)->varInt($c->food)->float(5.0));
@@ -3792,18 +3798,53 @@ final class Server
     }
 
     /** 加疲劳，攒够 4.0 掉 1 点饱食度并推血量包。 */
+    /**
+     * 饱食度系统：每 4 秒算一次
+     *   饱食度 >= 18 且没满血 → 回 1 点血（同时额外消耗）
+     *   饱食度 = 0        → 饿伤 1 点
+     * 原版是每 tick 判断、每 4 秒结算，这里按 4 秒结算更省。
+     */
+    private function tickFood(float $now): void
+    {
+        foreach ($this->players() as $f) {
+            if ($f->gamemode === 1) {
+                continue;
+            }
+            if ($now - $f->lastFoodTick < 4.0) {
+                continue;
+            }
+            $f->lastFoodTick = $now;
+
+            if ($f->food >= 18 && $f->health > 0 && $f->health < 20.0) {
+                $f->health = min(20.0, $f->health + 1.0);
+                $f->send(self::C_UPDATE_HEALTH, (new Writer())
+                    ->float($f->health)->varInt($f->food)->float($f->saturation));
+                $this->addExhaustion($f, 3.0);   // 回血本身也消耗
+            } elseif ($f->food <= 0 && $f->health > 1.0) {
+                $this->damage($f, 1);            // 饿伤（普通难度不致命）
+            }
+        }
+    }
+
     private function addExhaustion(Connection $c, float $amount): void
     {
         if ($c->gamemode === 1) {
             return;
         }
         $c->exhaustion += $amount;
-        while ($c->exhaustion >= 4.0 && $c->food > 0) {
+        // 原版：消耗度攒满 4 点扣一次，先扣饱和度，扣完才扣饱食度
+        while ($c->exhaustion >= 4.0) {
             $c->exhaustion -= 4.0;
-            $c->food--;
+            if ($c->saturation > 0) {
+                $c->saturation = max(0.0, $c->saturation - 1.0);
+            } elseif ($c->food > 0) {
+                $c->food--;
+                $this->log("  {$c->username} 饱食度降到 {$c->food}");
+            } else {
+                break;
+            }
             $c->send(self::C_UPDATE_HEALTH, (new Writer())
-                ->float($c->health)->varInt($c->food)->float(0.0));
-            $this->log("  {$c->username} 饱食度降到 {$c->food}");
+                ->float($c->health)->varInt($c->food)->float($c->saturation));
         }
     }
 
@@ -4744,6 +4785,7 @@ final class Server
         $this->processDrops();
         $this->tickXpOrbs();
         $this->tickArrows($now);
+        $this->tickFood($now);
         $this->tickFluids($now);
         $this->tickFurnaces($now);
         $this->tickBrewing($now);
