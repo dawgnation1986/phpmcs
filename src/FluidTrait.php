@@ -73,6 +73,67 @@ trait FluidTrait
         }
     }
 
+    /**
+     * 回流：水源被拿掉后，流出去的水要退回去。
+     *
+     * 判定很简单 —— 一格流动水只有在「紧挨着水源」或「紧挨着更近一级的流动水」
+     * 时才站得住；否则就是孤立的，删掉。反复扫几轮，最远的水先退，形成逐格退潮。
+     */
+    private function recedeAround(int $x, int $y, int $z, int $kind): void
+    {
+        $source = $kind === 1 ? 10 : 8;
+        $flowing = $kind === 1 ? 11 : 9;
+        $R = 8;
+
+        for ($pass = 0; $pass < 8; $pass++) {
+            $changed = false;
+            for ($dx = -$R; $dx <= $R; $dx++) {
+                for ($dz = -$R; $dz <= $R; $dz++) {
+                    for ($dy = -2; $dy <= 1; $dy++) {
+                        $cx = $x + $dx;
+                        $cy = $y + $dy;
+                        $cz = $z + $dz;
+                        if ($cy < 1 || $cy > 255) {
+                            continue;
+                        }
+                        $chunk = $this->world->chunk($cx >> 4, $cz >> 4);
+                        $state = $chunk->blockState($cx & 15, $cy, $cz & 15);
+                        if (($state >> 4) !== $flowing) {
+                            continue;
+                        }
+                        $myMeta = $state & 15;
+
+                        // 紧挨着水源就站得住
+                        $held = false;
+                        foreach ([[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, 0, 1], [0, 0, -1]] as [$ax, $ay, $az]) {
+                            $nb = $this->world->chunk(($cx + $ax) >> 4, ($cz + $az) >> 4)
+                                ->blockState(($cx + $ax) & 15, $cy + $ay, ($cz + $az) & 15);
+                            $nid = $nb >> 4;
+                            $nmeta = $nb & 15;
+                            if ($nid === $source) {
+                                $held = true;
+                                break;
+                            }
+                            if ($nid === $flowing && $nmeta < $myMeta) {
+                                $held = true;
+                                break;
+                            }
+                        }
+                        if ($held) {
+                            continue;
+                        }
+
+                        $this->changeBlock($cx, $cy, $cz, 0, 0);
+                        $changed = true;
+                    }
+                }
+            }
+            if (!$changed) {
+                return;
+            }
+        }
+    }
+
     private function flowFrom(int $x, int $y, int $z, int $kind, int $level, int $depth): void
     {
         $max = self::FLUID_REACH[$kind];

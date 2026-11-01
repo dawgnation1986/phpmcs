@@ -160,7 +160,8 @@ trait BlockPhysicsTrait
 
             // 重力方块：下面是空气就排队下落
             if (in_array($id, self::FALLING_BLOCKS, true) && $this->blockIdAt($tx, $ty - 1, $tz) === 0) {
-                $this->falling[$tx . ',' . $ty . ',' . $tz] = microtime(true) + 0.05;
+                $this->log("  排队下落：{$id} @ {$tx},{$ty},{$tz}");
+                $this->falling[$tx . ',' . $ty . ',' . $tz] = microtime(true) + 0.12;
             }
         }
     }
@@ -171,7 +172,7 @@ trait BlockPhysicsTrait
         if ($this->falling === []) {
             return;
         }
-        if ($now - $this->lastFallTick < 0.05) {
+        if ($now - $this->lastFallTick < 0.12) {
             return;
         }
         $this->lastFallTick = $now;
@@ -195,7 +196,13 @@ trait BlockPhysicsTrait
             $meta = $this->blockMetaAt($fx, $fy, $fz);
             $this->changeBlock($fx, $fy, $fz, 0, 0);
             $this->changeBlock($fx, $fy - 1, $fz, $id, $meta);
-            $this->falling[$fx . ',' . ($fy - 1) . ',' . $fz] = $now + 0.05;
+            $this->falling[$fx . ',' . ($fy - 1) . ',' . $fz] = $now + 0.12;
+
+            // 上面那格如果是同类重力方块，也跟着掉（整列一起落，不是只掉最上面一个）
+            $above = $this->blockIdAt($fx, $fy + 1, $fz);
+            if (in_array($above, self::FALLING_BLOCKS, true)) {
+                $this->falling[$fx . ',' . ($fy + 1) . ',' . $fz] = $now + 0.12;
+            }
         }
     }
 

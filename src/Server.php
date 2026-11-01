@@ -2290,6 +2290,11 @@ final class Server
         $this->broadcastBlockChange($x, $y, $z, 0);
         $this->markSection($x, $y, $z);
 
+        // 挖掉的是水/岩浆：外面流着的水要退回去
+        if (in_array($id, [8, 9, 10, 11], true)) {
+            $this->recedeAround($x, $y, $z, ($id === 10 || $id === 11) ? 1 : 0);
+        }
+
         // 破坏方块是直写 chunk 的（不经过 changeBlock），所以这里必须自己触发
         // 邻居更新 —— 否则上面的沙子不会掉、甘蔗不会跟着掉。
         if (!$this->inNeighborUpdate) {
