@@ -1678,7 +1678,8 @@ final class Server
                             }
                         }
                     }
-                    $this->log("  {$c->username} 打火石点火 @ {$tx},{$ty},{$tz}");
+                    $this->log("  {$c->username} 打火石点火 @ {$tx},{$ty},{$tz}"
+                        . ' 耐久=' . (($c->inventory[36 + $c->heldSlot]['damage'] ?? '已用坏')));
                     break;
                 } else {
                     $this->changeBlock($tx, $ty, $tz, $blockId, $this->placeMeta($c, $blockId, $damage & 0x0F));
