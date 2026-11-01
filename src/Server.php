@@ -4014,8 +4014,11 @@ final class Server
             $this->log(sprintf('  [0x06] %s health=%.1f food=%d saturation=%.2f',
                 $c->username, $c->health, $c->food, $c->saturation));
         }
+        // 实验：1.8 客户端在「饱和度 == 0」时会让饥饿图标抖动（starving shake）。
+        // 发一个极小的正数就能绕开这个判断，饥饿条数值显示不变。
+        $sendSat = $c->saturation > 0.0 ? $c->saturation : 0.01;
         $c->send(self::C_UPDATE_HEALTH, (new Writer())
-            ->float($c->health)->varInt($c->food)->float($c->saturation));
+            ->float($c->health)->varInt($c->food)->float($sendSat));
         $c->lastHealth = $c->health;
         $c->lastFood = $c->food;
         $c->wasHungry = $hungry;
