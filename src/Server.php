@@ -2064,6 +2064,15 @@ final class Server
         // 作物：登记进生长表
         if ($this->isGrowable($id)) {
             $this->registerCrop($x, $y, $z, $id, $meta);
+        } elseif ($existing !== 0 && $this->isGrowable($existing >> 4)) {
+            // 被清掉的是作物 → 必须从生长表注销，否则它会「凭空重新长出来」。
+            // 之前只有玩家手挖会注销，支撑失效掉落走的是 changeBlock，漏了这一步。
+            $this->unregisterCrop($x, $y, $z);
+        }
+
+        // 往水里塞方块：水会被挤开，外面流着的水也要退回去
+        if ($id !== 0 && in_array($existing >> 4, [8, 9, 10, 11], true)) {
+            $this->recedeAround($x, $y, $z, (($existing >> 4) === 10 || ($existing >> 4) === 11) ? 1 : 0);
         }
 
         // 告示牌：放下就建一个空 TE，客户端编辑时才有地方存
