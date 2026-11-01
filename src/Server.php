@@ -1708,12 +1708,17 @@ final class Server
                 $eaAction = $r->readVarInt();
                 $r->readVarInt();            // jumpBoost
                 if ($eaAction === 2) {       // STOP_SLEEPING：玩家点了「起床」
-                    unset($this->sleeping[$c->entityId]);
-                    $this->world->setTimeOfDay(0);
-                    $c->send(self::C_POS_LOOK, (new Writer())
-                        ->double($c->x)->double($c->y)->double($c->z)
-                        ->float($c->yaw)->float($c->pitch)->byte(0));
-                    $this->sendChat($c, ['text' => '起床了。', 'color' => 'gray'], 1);
+                    // 客户端在睡觉界面会**每拍都发**这个包，所以这里不能回聊天，
+                    // 否则就是刷屏（之前截图里那一片「起床了。」）。
+                    if (isset($this->sleeping[$c->entityId])) {
+                        unset($this->sleeping[$c->entityId]);
+                        $c->y += 0.1;
+                        $c->send(self::C_USE_BED, (new Writer())
+                            ->varInt($c->entityId)->raw(pack('J', -1)));
+                        $c->send(self::C_POS_LOOK, (new Writer())
+                            ->double($c->x)->double($c->y)->double($c->z)
+                            ->float($c->yaw)->float($c->pitch)->byte(0));
+                    }
                 }
                 break;
 
@@ -3759,6 +3764,12 @@ final class Server
         if ($food <= 0) {
             return;
         }
+        // 必须核对手上真有这玩意：客户端会一直发包，物品吃完之后
+        // 包里还是老 id，不核对就会「凭空吃东西」——饱食度看起来自动回满。
+        $held = $c->inventory[36 + $c->heldSlot] ?? null;
+        if (!is_array($held) || (int) $held['id'] !== $itemId) {
+            return;
+        }
 
         // 饱食度满了就不能吃（原版行为）：不扣物品、不放动画
         if ($c->food >= 20) {
@@ -4924,6 +4935,10 @@ final class Server
                         continue;
                     }
                     $sp2->y += 0.1;   // 必须有变化，否则客户端不认
+                    // 光发位置不够：客户端还停在睡觉界面（那个「起床」按钮）。
+                    // 再发一条 0x0A，床坐标填 -1 —— 客户端据此退出躺卧状态。
+                    $sp2->send(self::C_USE_BED, (new Writer())
+                        ->varInt($sp2->entityId)->raw(pack('J', -1)));
                     $sp2->send(self::C_POS_LOOK, (new Writer())
                         ->double($sp2->x)->double($sp2->y)->double($sp2->z)
                         ->float($sp2->yaw)->float($sp2->pitch)->byte(0));
