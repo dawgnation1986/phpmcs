@@ -4014,11 +4014,8 @@ final class Server
             $this->log(sprintf('  [0x06] %s health=%.1f food=%d saturation=%.2f',
                 $c->username, $c->health, $c->food, $c->saturation));
         }
-        // 实验：1.8 客户端在「饱和度 == 0」时会让饥饿图标抖动（starving shake）。
-        // 发一个极小的正数就能绕开这个判断，饥饿条数值显示不变。
-        $sendSat = $c->saturation > 0.0 ? $c->saturation : 0.01;
         $c->send(self::C_UPDATE_HEALTH, (new Writer())
-            ->float($c->health)->varInt($c->food)->float($sendSat));
+            ->float($c->health)->varInt($c->food)->float($c->saturation));
         $c->lastHealth = $c->health;
         $c->lastFood = $c->food;
         $c->wasHungry = $hungry;
@@ -5136,11 +5133,8 @@ final class Server
         // 每秒同步一次时间，客户端天空才会真的昼→夜
         if ($now - $this->lastTimeSync >= 1.0) {
             $this->lastTimeSync = $now;
-            // 每秒强制补一次 0x06：客户端偶尔会漏掉/忽略一包，
-            // 之后显示就一直停在旧值（看着「满的」其实服务端 17）。
-            foreach ($this->players() as $fp) {
-                $this->syncVitals($fp, true);
-            }
+            // 【已撤】之前每秒强制补 0x06，结果客户端每次收到都重画饥饿条，
+            // 看起来一直在抖。原版只在值变化时发，这里照原版。
             foreach ($this->players() as $p) {
                 $p->send(self::C_TIME_UPDATE, (new Writer())
                     ->long($this->world->worldAge())
