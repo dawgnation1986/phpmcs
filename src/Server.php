@@ -2828,6 +2828,13 @@ final class Server
     /** 饱食度调试：/foodlog 开关，开启后每次消耗/结算都写日志 */
     private bool $foodDebug = false;
 
+    /**
+     * 通用调试开关（/debug）。
+     * 【项目约定】以后每加一个功能，都在关键分支留一行 if ($this->debugLog) 的日志，
+     * 排查时用 /debug 一开就有，不用临时加代码再重启。
+     */
+    private bool $debugLog = false;
+
     /** 邻居更新递归保护（changeBlock → neighborUpdate → changeBlock） */
     private bool $inNeighborUpdate = false;
 
@@ -3611,6 +3618,13 @@ final class Server
                         . (!empty($it['ench']) ? '(附魔' . json_encode($it['ench']) . ')' : '');
                 }
                 $this->sendChat($c, ['text' => $rows === [] ? '背包是空的' : implode(' ', $rows), 'color' => 'aqua'], 1);
+                break;
+
+            case 'debug':
+                $this->debugLog = !$this->debugLog;
+                $this->sendChat($c, ['text' => '调试日志：' . ($this->debugLog ? '已开启' : '已关闭'),
+                    'color' => 'aqua'], 1);
+                $this->log('  调试日志 ' . ($this->debugLog ? '开启' : '关闭'));
                 break;
 
             case 'fluidfix':

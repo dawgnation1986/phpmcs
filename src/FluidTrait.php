@@ -163,6 +163,9 @@ trait FluidTrait
 
         if ($want === null) {
             // 没有来源支撑 → 干掉这一格，并让邻居重算（逐格退潮）
+            if ($this->debugLog) {
+                $this->log(sprintf('  [水] %d,%d,%d 没有来源，退掉（原 meta %d）', $x, $y, $z, $meta));
+            }
             $this->fluidTomb[$x . ',' . $y . ',' . $z] = true;
             $this->changeBlock($x, $y, $z, 0, 0);
             $this->notifyFluidNeighbors($x, $y, $z, $kind);
@@ -285,6 +288,15 @@ trait FluidTrait
             return false;
         }
 
+        if ($this->debugLog) {
+            $nbDesc = [];
+            foreach ([[1, 0], [-1, 0], [0, 1], [0, -1]] as [$dx, $dz]) {
+                $nb2 = $this->blockStateAt($x + $dx, $y, $z + $dz);
+                $nbDesc[] = sprintf('(%d,%d)=%d:%d', $x + $dx, $z + $dz, $nb2 >> 4, $nb2 & 15);
+            }
+            $this->log(sprintf('  [水] %d,%d,%d 升级成水源，邻=%s 下方=%d',
+                $x, $y, $z, implode(' ', $nbDesc), $bid));
+        }
         $this->changeBlock($x, $y, $z, $source, 0);
 
         return true;
