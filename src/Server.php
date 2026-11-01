@@ -72,6 +72,11 @@ final class Connection
     /** 上次重发挂载包的时刻 */
     public float $rideSyncAt = 0.0;
 
+    /** 站在传送门里的起始时刻（0 = 没在门里） */
+    public float $portalSince = 0.0;
+    /** 进传送门前的位置，回来时用 */
+    public ?array $portalReturn = null;
+
     /** 上次火焰伤害结算时刻 */
     public float $lastFireTick = 0.0;
 
@@ -199,6 +204,7 @@ final class Server
     use ArrowTrait;
     use BlockPhysicsTrait;
     use AnvilTrait;
+    use PortalTrait;
     use FluidTrait;
     use RedstoneTrait;
 
@@ -1661,6 +1667,24 @@ final class Server
                     // 打火石（259）：在点到的位置放火（51），并扣 1 点耐久
                     $cur = $this->world->chunk($tx >> 4, $tz >> 4)
                         ->blockState($tx & 15, $ty, $tz & 15);
+                    // 点的是黑曜石 → 先试试点燃地狱门
+                    if (($cur >> 4) === 49 && $this->tryIgnitePortal($c, $tx, $ty, $tz)) {
+                        if ($c->gamemode !== 1) {
+                            $hs2 = 36 + $c->heldSlot;
+                            $h2 = $c->inventory[$hs2] ?? null;
+                            if (is_array($h2) && (int) $h2['id'] === 259) {
+                                $h2['damage'] = (int) ($h2['damage'] ?? 0) + 1;
+                                if ($h2['damage'] >= 65) {
+                                    unset($c->inventory[$hs2]);
+                                    $this->sendSlot($c, $hs2, null);
+                                } else {
+                                    $c->inventory[$hs2] = $h2;
+                                    $this->sendSlot($c, $hs2, $h2);
+                                }
+                            }
+                        }
+                        break;
+                    }
                     if (($cur >> 4) === 0) {
                         $this->changeBlock($tx, $ty, $tz, 51, 0);
                     }
@@ -5177,6 +5201,7 @@ final class Server
         $this->tickFood($now);
         $this->tickFalling($now);
         $this->tickFireDamage($now);
+        $this->tickPortals($now);
         $this->tickFluids($now);
         $this->tickFurnaces($now);
         $this->tickBrewing($now);
