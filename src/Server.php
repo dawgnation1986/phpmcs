@@ -3816,7 +3816,7 @@ final class Server
         $c->saturation = min(20.0, $c->saturation + $food * 1.2);
         $c->health = min(20.0, $c->health + 1.0);
         $c->send(self::C_UPDATE_HEALTH, (new Writer())
-            ->float($c->health)->varInt($c->food)->float(5.0));
+            ->float($c->health)->varInt($c->food)->float($c->saturation));
         $this->log("  {$c->username} 吃了方块{$itemId}，饱食度 {$c->food}，血 {$c->health}");
     }
 
@@ -3922,7 +3922,7 @@ final class Server
         $c->send(self::C_UPDATE_HEALTH, (new Writer())
             ->float($c->health)
             ->varInt($c->food)
-            ->float(5.0));
+            ->float($c->saturation));
     }
 
     /** 发送窗口里的一个槽位（null = 空槽） */
@@ -4694,7 +4694,7 @@ final class Server
         $c->health = max(0.0, $c->health - $dmg);
         $this->addExhaustion($c, 0.3);   // 原版：每次受伤 0.3
         $c->send(self::C_UPDATE_HEALTH, (new Writer())
-            ->float($c->health)->varInt($c->food)->float(5.0));
+            ->float($c->health)->varInt($c->food)->float($c->saturation));
         $this->log("  {$c->username} 掉血 {$dmg}，剩 {$c->health}");
 
         if ($c->health <= 0.0) {
@@ -5036,18 +5036,6 @@ final class Server
             }
             if ($sent > 0) {
                 $this->log("  补发箱子段 {$sent} 个 -> {$p->username}（剩 " . count($p->chestSectionTimes) . ' 轮）');
-            }
-        }
-
-        // 自然回血：生存、饱食度 >= 18、没满血，每 4 秒回 1 点
-        foreach ($this->players() as $p) {
-            if ($p->gamemode !== 1 && $p->food >= 18 && $p->health > 0 && $p->health < 20
-                && $now - $p->lastRegen > 4.0) {
-                $p->lastRegen = $now;
-                $p->health = min(20.0, $p->health + 1.0);
-                $this->addExhaustion($p, 0.6);   // 原版：每回 1 点血消耗 0.6
-                $p->send(self::C_UPDATE_HEALTH, (new Writer())
-                    ->float($p->health)->varInt($p->food)->float(5.0));
             }
         }
 
