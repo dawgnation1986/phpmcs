@@ -1654,6 +1654,29 @@ final class Server
                         $this->changeBlock($tx, $ty + 1, $tz, $blockId, $doorMeta | 0x8);
                     }
                     $blockId = $blockId;
+                } elseif ($itemId === 259) {
+                    // 打火石（259）：在点到的位置放火（51），并扣 1 点耐久
+                    $cur = $this->world->chunk($tx >> 4, $tz >> 4)
+                        ->blockState($tx & 15, $ty, $tz & 15);
+                    if (($cur >> 4) === 0) {
+                        $this->changeBlock($tx, $ty, $tz, 51, 0);
+                    }
+                    if ($c->gamemode !== 1) {
+                        $hs = 36 + $c->heldSlot;
+                        $hh = $c->inventory[$hs] ?? null;
+                        if (is_array($hh) && (int) $hh['id'] === 259) {
+                            $hh['damage'] = (int) ($hh['damage'] ?? 0) + 1;
+                            if ($hh['damage'] >= 65) {
+                                unset($c->inventory[$hs]);
+                                $this->sendSlot($c, $hs, null);
+                            } else {
+                                $c->inventory[$hs] = $hh;
+                                $this->sendSlot($c, $hs, $hh);
+                            }
+                        }
+                    }
+                    $this->log("  {$c->username} 打火石点火 @ {$tx},{$ty},{$tz}");
+                    break;
                 } else {
                     $this->changeBlock($tx, $ty, $tz, $blockId, $this->placeMeta($c, $blockId, $damage & 0x0F));
                 }
