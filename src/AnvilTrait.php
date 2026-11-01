@@ -46,10 +46,12 @@ trait AnvilTrait
             ->byte(8)
             ->string('minecraft:anvil')
             ->string(json_encode(['text' => '铁砧'], JSON_UNESCAPED_UNICODE))
-            ->byte(39));                               // 2 输入 + 1 产物 + 36 背包
+            // slotCount 给 0：工作台就是这么开的（它也是有 GUI id 的容器）。
+            // 给真实槽位数时客户端会按普通容器排版，把铁砧画成 3x9 的格子。
+            ->byte(0));
 
         if ($this->debugLog) {
-            $this->log('  [铁砧] 发 Open Window：windowId=8 type=minecraft:anvil slots=39');
+            $this->log('  [铁砧] 发 Open Window：windowId=8 type=minecraft:anvil slots=0');
         }
 
         $this->sendAnvilWindow($c);
