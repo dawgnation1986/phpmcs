@@ -2816,6 +2816,8 @@ final class Server
         }
     }
 
+    private float $lastOrbTick = 0.0;
+
     /** @var array 经验球 eid => [x,y,z,amount] */
     private array $xpOrbs = [];
 
@@ -2835,7 +2837,7 @@ final class Server
             return;
         }
         $eid = $this->nextEntityId++;
-        $this->xpOrbs[$eid] = [$x, $y, $z, $amount];
+        $this->xpOrbs[$eid] = [$x, $y + 0.25, $z, $amount];
         foreach ($this->players() as $p) {
             // 经验球有独立的包 0x11（不是 Spawn Object）：
             // eid + x/y/z(*32) + 经验值(short)
@@ -2846,23 +2848,60 @@ final class Server
         }
     }
 
-    /** 每拍检查有没有玩家碰到经验球 */
-    private function tickXpOrbs(): void
+    /**
+     * 经验球：服务端自己吸附 + 拾取。
+     * 以前只有客户端在「视觉上」吸过去，服务端把球留在原地，
+     * 于是看着被吸走了、球却永远不消失。
+     * 原版 EntityXPOrb.onUpdate 就是每 tick 朝最近的玩家挪一点。
+     */
+    private function tickXpOrbs(float $now = 0.0): void
     {
         if ($this->xpOrbs === []) {
             return;
         }
+        // 主循环一秒上千次，不限速的话球会瞬间飞到身上（看不见过程）
+        if ($now - $this->lastOrbTick < 0.05) {
+            return;
+        }
+        $this->lastOrbTick = $now;
         foreach ($this->xpOrbs as $eid => [$ox, $oy, $oz, $amt]) {
+            // 找最近的玩家（8 格内才开始吸）
+            $best = null;
+            $bestD = 8.0;
             foreach ($this->players() as $p) {
-                if (abs($p->x - $ox) > 1.6 || abs($p->z - $oz) > 1.6 || abs($p->y - $oy) > 2.0) {
-                    continue;
+                $d = sqrt(($p->x - $ox) ** 2 + ($p->y + 0.9 - $oy) ** 2 + ($p->z - $oz) ** 2);
+                if ($d < $bestD) {
+                    $bestD = $d;
+                    $best = $p;
                 }
+            }
+            if ($best === null) {
+                continue;
+            }
+
+            if ($bestD <= 1.2) {
+                // 收到包里
                 unset($this->xpOrbs[$eid]);
                 foreach ($this->players() as $q) {
                     $q->send(self::C_DESTROY_ENTITIES, (new Writer())->varInt(1)->varInt($eid));
                 }
-                $this->giveExp($p, $amt);
-                break;
+                $this->giveExp($best, $amt);
+
+                continue;
+            }
+
+            // 朝玩家挪 0.35 格（原版大约这个速度）
+            $step = min(0.35, $bestD);
+            $ox += ($best->x - $ox) / $bestD * $step;
+            $oy += ($best->y + 0.9 - $oy) / $bestD * $step;
+            $oz += ($best->z - $oz) / $bestD * $step;
+            $this->xpOrbs[$eid] = [$ox, $oy, $oz, $amt];
+
+            foreach ($this->players() as $q) {
+                $q->send(self::C_ENTITY_TELEPORT, (new Writer())
+                    ->varInt($eid)
+                    ->int((int) ($ox * 32))->int((int) ($oy * 32))->int((int) ($oz * 32))
+                    ->byte(0)->byte(0)->bool(false));
             }
         }
     }
@@ -4938,7 +4977,7 @@ final class Server
         }
 
         $this->processDrops();
-        $this->tickXpOrbs();
+        $this->tickXpOrbs($now);
         $this->tickArrows($now);
         $this->tickFood($now);
         $this->tickFluids($now);
