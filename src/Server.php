@@ -117,7 +117,11 @@ final class Connection
     public bool $wasHungry = false;
     /** 饱和度：吃东西先加这个，消耗时先扣它（原版机制） */
     public float $saturation = 5.0;
-    /** 回血/饿伤的计时器（秒） */
+    /** 原版 foodTimer：每 tick +1，满 80 触发一次回血/饿伤；条件不满足要清零 */
+    public int $foodTimer = 0;
+    /** 原版 prevFoodLevel：上一 tick 的饱食度 */
+    public int $prevFoodLevel = 20;
+    /** 距离上一次 FoodStats.onUpdate 的时间（用它把主循环降到 20 TPS） */
     public float $lastFoodTick = 0.0;
     /** 开始下落时的高度，落地时用来算摔伤 */
     public float $fallFrom = -1.0;   // <0 表示没在下落
@@ -624,6 +628,14 @@ final class Server
         $c->xpProgress = $need0 > 0 ? min(1.0, ($total0 - $base0) / $need0) : 0.0;
         $c->send(self::C_SET_EXPERIENCE, (new Writer())
             ->float($c->xpProgress)->varInt($c->xpLevel)->varInt($c->xpTotal));
+
+        // 进服必须强制发一次 0x06。不发的话客户端一直用默认的 20/20 显示，
+        // 服务端存档里其实是 14/18，看起来就像「饥饿条自己回满」。
+        $c->lastHealth = -1.0;
+        $c->lastFood = -1;
+        $c->wasHungry = false;
+        $this->syncVitals($c, true);
+
         $c->resendInvAt = microtime(true) + 1.0;
 
         // 地上已有的掉落物要重新 Spawn 给这个连接。
@@ -2768,6 +2780,9 @@ final class Server
     /** 饱食度调试：/foodlog 开关，开启后每次消耗/结算都写日志 */
     private bool $foodDebug = false;
 
+    /** 世界规则 naturalRegeneration，1.8 默认 true */
+    private bool $naturalRegen = true;
+
     private array $xpStore = [];
     private bool $xpLoaded = false;
 
@@ -3859,24 +3874,50 @@ final class Server
             if ($f->gamemode === 1) {
                 continue;
             }
-            if ($now - $f->lastFoodTick < 4.0) {
+            // 主循环一秒跑上千次，这里按 50ms 一档降到 20 TPS
+            if ($now - $f->lastFoodTick < 0.05) {
                 continue;
             }
             $f->lastFoodTick = $now;
 
-            if ($this->foodDebug) {
-                $this->log(sprintf('  [食物] %s 结算：饱食 %d 饱和 %.1f 血 %.1f',
-                    $f->username, $f->food, $f->saturation, $f->health));
-            }
-            if ($f->food >= 18 && $f->health > 0 && $f->health < 20.0) {
-                $f->health = min(20.0, $f->health + 1.0);
-                if ($this->foodDebug) {
-                    $this->log(sprintf('  [食物] %s 回血 +1 -> %.1f', $f->username, $f->health));
+            $f->prevFoodLevel = $f->food;
+
+            // ① 消耗结算：每 tick 检查一次（原版就是这样，不是攒到 4 秒）
+            if ($f->exhaustion > 4.0) {
+                $f->exhaustion -= 4.0;
+                if ($f->saturation > 0.0) {
+                    $f->saturation = max(0.0, $f->saturation - 1.0);
+                } else {
+                    $f->food = max(0, $f->food - 1);
                 }
+                $this->log("  {$f->username} 饱食度降到 {$f->food}（饱和 "
+                    . round($f->saturation, 1) . '）');
                 $this->syncVitals($f);
-                $this->addExhaustion($f, 3.0);   // 回血本身也消耗
-            } elseif ($f->food <= 0 && $f->health > 1.0) {
-                $this->damage($f, 1);            // 饿伤（普通难度不致命）
+            }
+
+            // ② 自然回血：饱食度 >= 18 且没满血，累计 80 tick 回 1 点
+            if ($this->naturalRegen && $f->food >= 18 && $f->health > 0 && $f->health < 20.0) {
+                $f->foodTimer++;
+                if ($f->foodTimer >= 80) {
+                    $before = $f->health;
+                    $f->health = min(20.0, $f->health + 1.0);
+                    $f->exhaustion = min(40.0, $f->exhaustion + 3.0);
+                    $f->foodTimer = 0;
+                    $this->log(sprintf('  [食物] %s 回血 %.1f -> %.1f', $f->username, $before, $f->health));
+                    $this->syncVitals($f);
+                }
+            } elseif ($f->food <= 0) {
+                // ③ 饿伤：同样 80 tick 一次
+                $f->foodTimer++;
+                if ($f->foodTimer >= 80) {
+                    $f->foodTimer = 0;
+                    if ($f->health > 1.0) {
+                        $this->damage($f, 1);
+                    }
+                }
+            } else {
+                // ④ 两个条件都不满足：计时器必须清零（原版行为）
+                $f->foodTimer = 0;
             }
         }
     }
@@ -3928,23 +3969,11 @@ final class Server
         if ($c->gamemode === 1) {
             return;
         }
+        // 原版 addExhaustion 只累计（封顶 40），真正的扣除在 FoodStats.onUpdate 里
+        $c->exhaustion = min(40.0, $c->exhaustion + $amount);
         if ($this->foodDebug) {
-            $this->log(sprintf('  [食物] %s 消耗 +%.2f（当前消耗度 %.2f 饱食 %d 饱和 %.1f）',
+            $this->log(sprintf('  [食物] %s 消耗 +%.2f -> %.2f（饱食 %d 饱和 %.1f）',
                 $c->username, $amount, $c->exhaustion, $c->food, $c->saturation));
-        }
-        $c->exhaustion += $amount;
-        // 原版：消耗度攒满 4 点扣一次，先扣饱和度，扣完才扣饱食度
-        while ($c->exhaustion > 4.0) {
-            $c->exhaustion -= 4.0;
-            if ($c->saturation > 0) {
-                $c->saturation = max(0.0, $c->saturation - 1.0);
-            } elseif ($c->food > 0) {
-                $c->food--;
-                $this->log("  {$c->username} 饱食度降到 {$c->food}");
-            } else {
-                break;
-            }
-            $this->syncVitals($c);
         }
     }
 
