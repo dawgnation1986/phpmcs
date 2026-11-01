@@ -201,6 +201,8 @@ final class Server
     private const C_SPAWN_XP_ORB = 0x11;
     /** S->C Attach Entity：乘坐的实体 id + 载具 id（-1 = 下来）+ 拴绳字节 */
     private const C_ATTACH_ENTITY = 0x1B;
+    /** S->C Use Bed：实体 id + 床坐标。客户端收到才会躺下 */
+    private const C_USE_BED = 0x0A;
     private const C_ENTITY_MOVE = 0x15;
     /** S->C Set Experience：进度(float) + 等级(varint) + 总经验(varint) */
     private const C_SET_EXPERIENCE = 0x1F;      // 相对移动（客户端插值，看着顺）
@@ -1279,13 +1281,14 @@ final class Server
 
                 if ($hitId === 26) {
                     if ($this->isNight()) {
-                        // 【已知限制】不发 S0A：1.8 客户端一旦进入躺姿，服务端
-                        // 没有任何可靠的包能把它叫起来（S0A(-1,-1,-1)、位置包 y+0.1、
-                        // 抹掉床方块都试过，全部无效，只会留下「起床」按钮卡死）。
-                        // 参考实现 别人的/phpmc 也是靠「所有人入睡后统一发位置包」，
-                        // 单人情况下不触发，等于没验证过。
-                        // 所以这里只保留「躺一会儿」的等待，不进躺姿。
+                        // 发 0x0A Use Bed，客户端才会真的躺下。
+                        // 叫起来靠「位置包 y+0.1」—— 参考实现（别人的/phpmc）就是这么做的。
                         $this->sleeping[$c->entityId] = microtime(true) + 3.0;
+                        $bedPos = $this->packPositionBytes($x, $y, $z);
+                        foreach ($this->players() as $sv) {
+                            $sv->send(self::C_USE_BED, (new Writer())
+                                ->varInt($c->entityId)->raw($bedPos));
+                        }
                         $this->sendChat($c, ['text' => '你躺下了……', 'color' => 'gray'], 1);
                         $this->log('  ' . $c->username . ' 躺下 @ ' . $x . ',' . $y . ',' . $z);
                     } else {
@@ -4873,7 +4876,7 @@ final class Server
                     continue;
                 }
                 unset($this->sleeping[$eid]);
-                $this->world->setTimeOfDay(0);
+                $this->world->setTimeOfDay(1);   // 醒来即清晨
                 // 唤醒：位置包必须让 y 有变化，否则客户端认为没动、继续躺着。
                 // （参考实现就是这么做的：y + 0.1 强制脱离躺卧姿势）
                 foreach ($this->conns as $sp2) {
