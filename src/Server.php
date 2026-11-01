@@ -72,6 +72,9 @@ final class Connection
     /** 上次重发挂载包的时刻 */
     public float $rideSyncAt = 0.0;
 
+    /** 上次火焰伤害结算时刻 */
+    public float $lastFireTick = 0.0;
+
     /** 上次移动的时刻（用来判断玩家是不是站着不动） */
     public float $lastMoveAt = 0.0;
 
@@ -4074,6 +4077,32 @@ final class Server
      *   饱食度 = 0        → 饿伤 1 点
      * 原版是每 tick 判断、每 4 秒结算，这里按 4 秒结算更省。
      */
+    /**
+     * 火焰/岩浆伤害：站在火或岩浆里，每 0.5 秒掉 1 点血。
+     * 原版是按接触盒算的，这里简化成「脚所在那一格」。
+     */
+    private function tickFireDamage(float $now): void
+    {
+        foreach ($this->players() as $p) {
+            if ($now - $p->lastFireTick < 0.5) {
+                continue;
+            }
+            $p->lastFireTick = $now;
+            $feet = $this->blockIdAt((int) floor($p->x), (int) floor($p->y), (int) floor($p->z));
+            if ($feet === 51) {                 // 火
+                $this->damage($p, 1);
+                if ($this->debugLog) {
+                    $this->log("  [火] {$p->username} 站在火里，掉血");
+                }
+            } elseif ($feet === 10 || $feet === 11) {   // 岩浆
+                $this->damage($p, 4);
+                if ($this->debugLog) {
+                    $this->log("  [火] {$p->username} 站在岩浆里，掉血 4");
+                }
+            }
+        }
+    }
+
     private function tickFood(float $now): void
     {
         foreach ($this->players() as $f) {
@@ -5146,6 +5175,7 @@ final class Server
         $this->tickArrows($now);
         $this->tickFood($now);
         $this->tickFalling($now);
+        $this->tickFireDamage($now);
         $this->tickFluids($now);
         $this->tickFurnaces($now);
         $this->tickBrewing($now);
