@@ -1283,15 +1283,12 @@ final class Server
 
                 if ($hitId === 26) {
                     if ($this->isNight()) {
-                        // 【不再发 0x0A】1.8 客户端一旦收到 Use Bed 就进入躺姿，
-                        // 而服务端没有任何可靠的包能让它退出（位置包、0x0A 填 -1
-                        // 全试过，人卡在床上，只剩一个点不动的「起床」按钮）。
-                        // 所以改成：不发躺卧包，直接跳过夜晚。
-                        $this->world->setTimeOfDay(1);
+                        // 躺下：0x0A Use Bed
+                        $this->sleeping[$c->entityId] = microtime(true) + 5.0;
+                        $bedPos = $this->packPositionBytes($x, $y, $z);
                         foreach ($this->players() as $sv) {
-                            $sv->send(self::C_TIME_UPDATE, (new Writer())
-                                ->long($this->world->worldAge())
-                                ->long($this->world->timeOfDay()));
+                            $sv->send(self::C_USE_BED, (new Writer())
+                                ->varInt($c->entityId)->raw($bedPos));
                         }
                         $this->sendChat($c, ['text' => '你躺下了……', 'color' => 'gray'], 1);
                         $this->log('  ' . $c->username . ' 躺下 @ ' . $x . ',' . $y . ',' . $z);
@@ -1710,16 +1707,10 @@ final class Server
                 $eaAction = $r->readVarInt();
                 $r->readVarInt();            // jumpBoost
                 if ($eaAction === 2) {       // STOP_SLEEPING：玩家点了「起床」
-                    // 客户端在睡觉界面会**每拍都发**这个包，所以这里不能回聊天，
-                    // 否则就是刷屏（之前截图里那一片「起床了。」）。
+                    // 客户端在睡觉界面会每拍都发，所以只在真的睡着时处理一次
                     if (isset($this->sleeping[$c->entityId])) {
                         unset($this->sleeping[$c->entityId]);
-                        $c->y += 0.1;
-                        $c->send(self::C_USE_BED, (new Writer())
-                            ->varInt($c->entityId)->raw(pack('J', -1)));
-                        $c->send(self::C_POS_LOOK, (new Writer())
-                            ->double($c->x)->double($c->y)->double($c->z)
-                            ->float($c->yaw)->float($c->pitch)->byte(0));
+                        $this->wakePlayer($c);
                     }
                 }
                 break;
@@ -2421,10 +2412,11 @@ final class Server
                 ($c->x - $c->lastX) ** 2 + ($c->z - $c->lastZ) ** 2
             );
             if ($dist > 0.02) {
-                $this->addExhaustion($c, $dist * 0.1);
+                // 原版：走路 0.01/格、疾跑 0.1/格。我们没区分疾跑，先按走路算。
+                $this->addExhaustion($c, $dist * 0.01);
             }
             if ($onGround === false && $c->y > $c->lastY + 0.15) {
-                $this->addExhaustion($c, 0.05);
+                $this->addExhaustion($c, 0.2);   // 原版普通跳跃 0.2
             }
             $c->lastX = $c->x;
             $c->lastY = $c->y;
@@ -3743,6 +3735,34 @@ final class Server
     // ---------------- 杂项 ----------------
 
     /** 食物 id => 恢复的饱食度（1.8 的常见食物） */
+    /**
+     * 每种食物的饱和度系数（1.8 原版 saturationModifier）。
+     * 实际加的饱和度 = food * modifier * 2，上限是当前饱食度。
+     */
+    private const FOOD_SAT = [
+        260 => 0.3,   // 苹果 4 -> 2.4
+        282 => 0.6,   // 蘑菇煲 6 -> 7.2
+        297 => 0.6,   // 面包 5 -> 6.0
+        319 => 0.3,   // 生猪排 3 -> 1.8
+        320 => 0.8,   // 熟猪排 8 -> 12.8
+        322 => 1.2,   // 金苹果 4 -> 9.6
+        349 => 0.1,   // 生鱼 2 -> 0.4
+        350 => 0.6,   // 熟鱼 5 -> 6.0
+        357 => 0.1,   // 曲奇 2 -> 0.4
+        360 => 0.3,   // 西瓜片 2 -> 1.2
+        363 => 0.3,   // 生牛肉 3 -> 1.8
+        364 => 0.8,   // 牛排 8 -> 12.8
+        365 => 0.3,   // 生鸡肉 2 -> 1.2
+        366 => 0.6,   // 熟鸡肉 6 -> 7.2
+        391 => 0.6,   // 胡萝卜 3 -> 3.6
+        392 => 0.3,   // 马铃薯 1 -> 0.6
+        393 => 0.6,   // 烤马铃薯 5 -> 6.0
+        394 => 0.3,   // 毒马铃薯 2 -> 1.2
+        400 => 0.3,   // 南瓜派 8 -> 4.8
+        423 => 0.3,   // 生羊肉 2 -> 1.2
+        424 => 0.8,   // 熟羊肉 6 -> 9.6
+    ];
+
     private const FOOD = [
         260 => 4,   // 苹果
         282 => 6,   // 蘑菇煲
@@ -3813,7 +3833,10 @@ final class Server
 
         $c->food = min(20, $c->food + $food);
         // 饱和度约等于回血量的 1.2 倍（原版按食物表，这里简化）
-        $c->saturation = min(20.0, $c->saturation + $food * 1.2);
+        // 原版 FoodStats.addStats：饱和度 = min(饱食度, 原饱和度 + food*modifier*2)
+        // modifier 每种食物不同，这里按 1.8 的数值表查
+        $mod = self::FOOD_SAT[$itemId] ?? 0.6;
+        $c->saturation = min((float) $c->food, $c->saturation + $food * $mod * 2.0);
         $c->health = min(20.0, $c->health + 1.0);
         $c->send(self::C_UPDATE_HEALTH, (new Writer())
             ->float($c->health)->varInt($c->food)->float($c->saturation));
@@ -3856,6 +3879,27 @@ final class Server
         }
     }
 
+    /**
+     * 唤醒玩家。1.8.9 的正确做法（原版 EntityPlayerMP.wakeUpPlayer）：
+     *   1. 广播 S0B Animation type=2（离开床的动画）
+     *   2. 给本人发 S08 位置与视角，把人放到床上方
+     * 之前我一直发 0x0A 填 -1，那是「进入床铺」的包，方向用错了 ——
+     * 客户端只会更混乱，人永远起不来。
+     */
+    private function wakePlayer(Connection $c): void
+    {
+        foreach ($this->players() as $p) {
+            $p->send(self::C_ANIMATION, (new Writer())
+                ->varInt($c->entityId)->byte(2));     // 2 = leave bed
+        }
+        // 站到床上方，y 略微抬起（避免嵌进床里）
+        $c->y += 0.6;
+        $c->send(self::C_POS_LOOK, (new Writer())
+            ->double($c->x)->double($c->y)->double($c->z)
+            ->float($c->yaw)->float($c->pitch)->byte(0));
+        $this->log('  ' . $c->username . ' 起床（S0B 动画 2 + S08）');
+    }
+
     private function addExhaustion(Connection $c, float $amount): void
     {
         if ($c->gamemode === 1) {
@@ -3867,7 +3911,7 @@ final class Server
         }
         $c->exhaustion += $amount;
         // 原版：消耗度攒满 4 点扣一次，先扣饱和度，扣完才扣饱食度
-        while ($c->exhaustion >= 4.0) {
+        while ($c->exhaustion > 4.0) {
             $c->exhaustion -= 4.0;
             if ($c->saturation > 0) {
                 $c->saturation = max(0.0, $c->saturation - 1.0);
@@ -4950,23 +4994,20 @@ final class Server
                     continue;
                 }
                 unset($this->sleeping[$eid]);
-                $this->world->setTimeOfDay(1);   // 醒来即清晨
-                // 唤醒：位置包必须让 y 有变化，否则客户端认为没动、继续躺着。
-                // （参考实现就是这么做的：y + 0.1 强制脱离躺卧姿势）
+                // 跳夜：推进到下一个完整的 24000 tick 边界（原版行为）
+                $t = $this->world->timeOfDay() + 24000;
+                $this->world->setTimeOfDay($t - ($t % 24000));
+                foreach ($this->players() as $sv) {
+                    $sv->send(self::C_TIME_UPDATE, (new Writer())
+                        ->long($this->world->worldAge())
+                        ->long($this->world->timeOfDay()));
+                }
                 foreach ($this->conns as $sp2) {
                     if ($sp2->closed || $sp2->entityId !== $eid) {
                         continue;
                     }
-                    $sp2->y += 0.1;   // 必须有变化，否则客户端不认
-                    // 光发位置不够：客户端还停在睡觉界面（那个「起床」按钮）。
-                    // 再发一条 0x0A，床坐标填 -1 —— 客户端据此退出躺卧状态。
-                    $sp2->send(self::C_USE_BED, (new Writer())
-                        ->varInt($sp2->entityId)->raw(pack('J', -1)));
-                    $sp2->send(self::C_POS_LOOK, (new Writer())
-                        ->double($sp2->x)->double($sp2->y)->double($sp2->z)
-                        ->float($sp2->yaw)->float($sp2->pitch)->byte(0));
+                    $this->wakePlayer($sp2);
                     $this->sendChat($sp2, ['text' => '一觉睡到天亮。', 'color' => 'green'], 1);
-                    $this->log('  ' . $sp2->username . ' 起床 -> 天亮');
                 }
             }
         }
