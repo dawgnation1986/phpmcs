@@ -191,8 +191,16 @@ trait AnvilTrait
             // 【只给 1 个】产物里继承了输入槽的 count（比如 14 根线），
             // 如果整组发出去、却只扣每格 1 个，玩家就会「放 14 根、拿回 14 根还扣了 1」——
             // 净赚 13。原版铁砧一次只出一个成品。
-            $this->giveItem($c, (int) $out['id'], 1, (int) ($out['damage'] ?? 0),
-                empty($out['ench']) ? [] : ['ench' => $out['ench']]);
+            // 【必须把 name 一起传】giveItem 只认它收到的字段，
+            // 之前只传了 ench，名字到这里就丢了 —— 改名永远不生效。
+            $extra = [];
+            if (!empty($out['ench'])) {
+                $extra['ench'] = $out['ench'];
+            }
+            if (!empty($out['name'])) {
+                $extra['name'] = $out['name'];
+            }
+            $this->giveItem($c, (int) $out['id'], 1, (int) ($out['damage'] ?? 0), $extra);
             $this->consumeAnvilSlot($c, 'slot0');
             $this->consumeAnvilSlot($c, 'slot1');
             $this->log("  {$c->username} 铁砧取出 " . $out['id'] . 'x1');
@@ -238,8 +246,14 @@ trait AnvilTrait
         foreach (['slot0', 'slot1'] as $key) {
             $it = $c->anvil[$key];
             if ($it !== null) {
-                $this->giveItem($c, (int) $it['id'], (int) $it['count'], (int) ($it['damage'] ?? 0),
-                    empty($it['ench']) ? [] : ['ench' => $it['ench']]);
+                $extra = [];
+                if (!empty($it['ench'])) {
+                    $extra['ench'] = $it['ench'];
+                }
+                if (!empty($it['name'])) {
+                    $extra['name'] = $it['name'];
+                }
+                $this->giveItem($c, (int) $it['id'], (int) $it['count'], (int) ($it['damage'] ?? 0), $extra);
             }
         }
         $c->anvil = null;
