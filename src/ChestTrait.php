@@ -30,7 +30,7 @@ trait ChestTrait
             // 铁砧改过的名字存在 display.Name 里（1.8 就是这个名字）
             $nbt = Nbt::write(Tag::compound([
                 'display' => Tag::compound([
-                    'Name' => Tag::string((string) $item['name']),
+                    'Name' => Tag::str((string) $item['name']),
                 ]),
             ]));
         }
@@ -50,7 +50,7 @@ trait ChestTrait
             ];
             if (!empty($item['name'])) {
                 $root['display'] = Tag::compound([
-                    'Name' => Tag::string((string) $item['name']),
+                    'Name' => Tag::str((string) $item['name']),
                 ]);
             }
             $nbt = Nbt::write(Tag::compound($root));

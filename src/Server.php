@@ -5366,6 +5366,11 @@ final class Server
                 $c->chest = null;
             }
             $this->closeWorkbench($c);
+            // 铁砧里放着东西就断线（比如改名那一下崩了）→ 东西必须还回去，
+            // 之前没这一步，改名中途被踢，槽里的物品就凭空消失了。
+            if ($c->anvil !== null) {
+                $this->closeAnvil($c);
+            }
             $this->resetDrag($c);
             if ($c->cursor !== null) {
                 // 光标上的东西还没放下就断线：塞回背包，别吞掉
