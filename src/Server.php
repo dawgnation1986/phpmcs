@@ -3844,6 +3844,9 @@ final class Server
             }
             if ($f->food >= 18 && $f->health > 0 && $f->health < 20.0) {
                 $f->health = min(20.0, $f->health + 1.0);
+                if ($this->foodDebug) {
+                    $this->log(sprintf('  [食物] %s 回血 +1 -> %.1f', $f->username, $f->health));
+                }
                 $f->send(self::C_UPDATE_HEALTH, (new Writer())
                     ->float($f->health)->varInt($f->food)->float($f->saturation));
                 $this->addExhaustion($f, 3.0);   // 回血本身也消耗
