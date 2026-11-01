@@ -5092,6 +5092,11 @@ final class Server
         // 每秒同步一次时间，客户端天空才会真的昼→夜
         if ($now - $this->lastTimeSync >= 1.0) {
             $this->lastTimeSync = $now;
+            // 每秒强制补一次 0x06：客户端偶尔会漏掉/忽略一包，
+            // 之后显示就一直停在旧值（看着「满的」其实服务端 17）。
+            foreach ($this->players() as $fp) {
+                $this->syncVitals($fp, true);
+            }
             foreach ($this->players() as $p) {
                 $p->send(self::C_TIME_UPDATE, (new Writer())
                     ->long($this->world->worldAge())
