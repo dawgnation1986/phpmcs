@@ -24,9 +24,14 @@ trait FluidTrait
     private const FLUID_REACH = [0 => 7, 1 => 3];
 
     /** 把一个流体方块丢进扩散队列。种类：0 水 / 1 岩浆 */
-    private function startFluid(int $x, int $y, int $z, int $kind, int $level = 0): void
+    /**
+     * 入队一次流体更新。
+     * 注意 $depth：之前签名里没有这个参数，调用方传的第 6 个参数被 PHP 直接丢弃，
+     * 队列里永远写 0 —— 于是 FLUID_REACH（水 7 格 / 岩浆 3 格）从来没生效过。
+     */
+    private function startFluid(int $x, int $y, int $z, int $kind, int $level = 0, int $depth = 0): void
     {
-        $this->fluidQueue[] = [$x, $y, $z, $kind, $level, 0];
+        $this->fluidQueue[] = [$x, $y, $z, $kind, $level, $depth];
     }
 
     /** 放置流体方块时调用：先落地，再排队扩散 */

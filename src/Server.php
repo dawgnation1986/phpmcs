@@ -2070,10 +2070,10 @@ final class Server
             $this->unregisterCrop($x, $y, $z);
         }
 
-        // 往水里塞方块：水会被挤开，外面流着的水也要退回去
-        if ($id !== 0 && in_array($existing >> 4, [8, 9, 10, 11], true)) {
-            $this->recedeAround($x, $y, $z, (($existing >> 4) === 10 || ($existing >> 4) === 11) ? 1 : 0);
-        }
+        // 【P0 已停用】往水里塞方块时原本会调 recedeAround()，它会扫半径 8
+        // 把「判断为孤立」的水整片删掉 —— 填一格方块就能让整条河干掉。
+        // 原版的液体是靠自己的计划刻逐个方块重算的，不是区域清理。
+        // 等液体系统重写后再恢复，这里先彻底停掉。
 
         // 告示牌：放下就建一个空 TE，客户端编辑时才有地方存
         if ($id === 63 || $id === 68) {
@@ -2299,10 +2299,6 @@ final class Server
         $this->broadcastBlockChange($x, $y, $z, 0);
         $this->markSection($x, $y, $z);
 
-        // 挖掉的是水/岩浆：外面流着的水要退回去
-        if (in_array($id, [8, 9, 10, 11], true)) {
-            $this->recedeAround($x, $y, $z, ($id === 10 || $id === 11) ? 1 : 0);
-        }
 
         // 破坏方块是直写 chunk 的（不经过 changeBlock），所以这里必须自己触发
         // 邻居更新 —— 否则上面的沙子不会掉、甘蔗不会跟着掉。
