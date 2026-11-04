@@ -18,6 +18,12 @@ use PhpMc\Nbt\Tag;
  */
 final class AnvilWorld
 {
+    /** 地狱带中心（区块坐标）：世界坐标 200000,200000 */
+    public const NETHER_CX = 12500;
+    public const NETHER_CZ = 12500;
+    /** 地狱带半径（区块数），512 区块 = 8192 格见方，走不到边 */
+    public const NETHER_RADIUS = 512;
+
     private Tag $level;
     /** @var array<string, Chunk> */
     private array $chunks = [];
@@ -30,6 +36,10 @@ final class AnvilWorld
     private int $seed = 0;
     /** 独立的地形生成器（噪声/群系拆在 TerrainGenerator.php） */
     private TerrainGenerator $generator;
+    /** 地狱地形生成器（只在地狱坐标带里用） */
+    private NetherGenerator $nether;
+    /** 地狱区块生成计数，日志只记前几个，不然一次视野 400 多个区块刷屏 */
+    private int $netherGenCount = 0;
     /** 旧生成器写过、等待迁移落盘的区块 key */
     private array $migrated = [];
     /** 旧生成区块的 LastUpdate 阈值（Unix 秒） */
@@ -56,6 +66,7 @@ final class AnvilWorld
         $this->seed = Nbt::int($this->data(), 'RandomSeed', 0);
 
         $this->generator = new TerrainGenerator($this->seed);
+        $this->nether = new NetherGenerator($this->seed);
         // 出生点掉海里就挪到最近的陆地（必须在 generator 建好之后，
         // 它要查群系；放前面会撞上「属性未初始化」）
         $this->ensureSpawnOnLand();
@@ -246,7 +257,15 @@ final class AnvilWorld
                 $path
             ));
         }
-        $chunk = new Chunk($cx, $cz, $this->generator->generate($cx, $cz));
+        // 地狱坐标带走独立的地形生成器，否则「挖穿天花板看到主世界」
+        $isNether = $this->isNetherChunk($cx, $cz);
+        if ($isNether && $this->netherGenCount < 3) {
+            $this->netherGenCount++;
+            error_log(sprintf('[phpmcs] 地狱地形生成 %d,%d（第 %d 个）', $cx, $cz, $this->netherGenCount));
+        }
+        $chunk = new Chunk($cx, $cz, $isNether
+            ? $this->nether->generate($cx, $cz)
+            : $this->generator->generate($cx, $cz));
         // 磁盘上本来就没有这个区块：生成后落盘，下次直接读，不再临时生成。
         // 条目存在但读坏了就先不写，避免把可能有救的数据覆盖掉。
         $chunk->dirty = !$this->hasChunkEntry($cx, $cz);
@@ -959,7 +978,30 @@ final class AnvilWorld
 
     public function chunkBiomes(int $cx, int $cz): array
     {
+        if ($this->isNetherChunk($cx, $cz)) {
+            return array_fill(0, 256, 8);   // 8 = Hell
+        }
+
         return $this->generator->biomeGrid($cx, $cz);
+    }
+
+    /**
+     * 这一格区块是不是地狱。
+     *
+     * 我们没建真的 DIM-1 目录 —— 地狱是主世界地图上一块远处的坐标带，
+     * 以 (200000, 200000) 为中心，半径 128 区块（2048 格）。
+     * 越界就是普通主世界地形，玩家走不出那么远。
+     */
+    public function isNetherChunk(int $cx, int $cz): bool
+    {
+        return abs($cx - self::NETHER_CX) <= self::NETHER_RADIUS
+            && abs($cz - self::NETHER_CZ) <= self::NETHER_RADIUS;
+    }
+
+    /** 世界坐标是不是在地狱带里 */
+    public function isNetherAt(int $x, int $z): bool
+    {
+        return $this->isNetherChunk($x >> 4, $z >> 4);
     }
 
     public function seed(): int

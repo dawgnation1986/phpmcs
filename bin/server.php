@@ -11,6 +11,7 @@ declare(strict_types=1);
  */
 
 require __DIR__ . '/../src/Protocol.php';
+require __DIR__ . '/../src/WebSocket.php';
 require __DIR__ . '/../src/Nbt/Tag.php';
 require __DIR__ . '/../src/Nbt/Nbt.php';
 require __DIR__ . '/../src/World/Chunk.php';
@@ -28,6 +29,8 @@ foreach (glob(__DIR__ . '/../src/World/Layer/*.php') as $__f) {
     require $__f;
 }
 require __DIR__ . '/../src/World/TerrainGenerator.php';
+require __DIR__ . '/../src/World/NetherCaveGenerator.php';
+require __DIR__ . '/../src/World/NetherGenerator.php';
 require __DIR__ . '/../src/World/AnvilWorld.php';
 require __DIR__ . '/../src/World/ChestStore.php';
 require __DIR__ . '/../src/ChestTrait.php';
@@ -99,6 +102,14 @@ if (isset($props['view-distance'])) {
 }
 $maxPlayers = isset($props['max-players']) ? max(1, (int) $props['max-players']) : 20;
 
+// wss（网页客户端走 TLS 的入口）。没配 wss-port 就不开。
+// 证书默认用 certs/ 下那对自签的，换成正版证书改这两个键就行。
+$wssPort = isset($props['wss-port']) ? (int) $props['wss-port'] : 0;
+$wssCert = $props['wss-cert'] ?? (__DIR__ . '/../certs/server.crt');
+$wssKey = $props['wss-key'] ?? (__DIR__ . '/../certs/server.key');
+// 公网地址：进服广播里用。没配就用本机内网 IP。
+$publicHost = $props['public-address'] ?? '';
+
 $world = new PhpMc\World\AnvilWorld($worldDir);
 if (isset($props['gamemode'])) {
     $gamemode = (int) $props['gamemode'];
@@ -126,7 +137,7 @@ $chests = new PhpMc\World\ChestStore(
 $world->attachChestStore($chests);
 $gamemode = $world->created ? 1 : $world->gameType();
 
-$server = new PhpMc\Server('0.0.0.0', $port, $motd, $world, $skins, $chests, $maxPlayers, $gamemode, $viewDistance ?? 3);
+$server = new PhpMc\Server('0.0.0.0', $port, $motd, $world, $skins, $chests, $maxPlayers, $gamemode, $viewDistance ?? 3, $wssPort ?? 0, $wssCert, $wssKey, $publicHost ?? '');
 $world->addTileProvider([$server, 'furnaceTilesForChunk']);
 $world->addTileProvider([$server, 'spawnerTilesForChunk']);
 $world->addTileProvider([$server, 'bannerTilesForChunk']);

@@ -4,18 +4,19 @@ declare(strict_types=1);
 namespace PhpMc;
 
 /**
- * 地狱门（A 方案：传送门 + 固定平台，不做真地形）。
+ * 地狱门。
  *
  * 做法：
- *   1. 打火石点黑曜石 → 在附近找 4×5 的黑曜石框，内部填传送门方块(90)
- *   2. 站在传送门里 2 秒 → 传送到「地狱平台」（同一世界、远坐标）
- *   3. 平台是现搭的：24×24 地狱岩地面 + 四周围栏 + 一个回程门
+ *   1. 打火石点黑曜石 → 向四周探查黑曜石框，内部填传送门方块(90)
+ *   2. 站在传送门里 2 秒 → 传送到地狱（主世界地图上 (200000,200000) 那块坐标带）
+ *   3. 落点周围清一个 7×7×5 的房间，北墙嵌回程门
  *   4. 在地狱那边站门里 → 传回原来的位置
  *
- * 为什么不去改维度：
- *   1.8 切维度要发 0x07 并重建整个客户端世界，还要给 AnvilWorld 加 DIM-1 目录，
- *   一旦改错主世界也会崩。这里用「远坐标 + 地狱岩地面」模拟，
- *   客户端看起来就是地狱，风险为零。
+ * 地狱是真地形，不是现搭的平台：
+ *   AnvilWorld 在 (12500,12500) 半径 128 区块内改用 NetherGenerator，
+ *   有岩浆海、分层洞穴、萤石、灵魂沙、石英矿。
+ *   没建 DIM-1 目录 —— 维度靠 0x07 包切（客户端会按 dimension -1 渲染），
+ *   方块数据还是同一个 AnvilWorld，只是那块坐标带是地狱地形。
  */
 trait PortalTrait
 {
@@ -30,6 +31,10 @@ trait PortalTrait
     private const NETHER_Z = 200000;
 
     private bool $netherBuilt = false;
+    /** 维度自动同步的节流时间 */
+    private float $lastDimSync = 0.0;
+    /** 地狱入口房间的地面高度（第一次传送时定下来） */
+    private int $netherY = self::NETHER_Y;
     private float $lastPortalTick = 0.0;
 
     /**
@@ -205,16 +210,19 @@ trait PortalTrait
 
     private function teleportThroughPortal(Connection $c): void
     {
-        $atNether = abs($c->x - self::NETHER_X) < 64 && abs($c->z - self::NETHER_Z) < 64;
+        // 用区块带判断，不能用「离落点 64 格」—— 玩家在地狱走远了就判错，
+        // 会以为自己在主世界，一站门又给送回地狱。
+        $atNether = $this->world->isNetherAt((int) floor($c->x), (int) floor($c->z));
 
         if ($atNether) {
             // 回主世界：回到进门前的位置
             [$tx, $ty, $tz] = $c->portalReturn ?? [-63.0, 64.0, -42.0];
         } else {
-            $this->ensureNetherPlatform();
             $c->portalReturn = [$c->x, $c->y, $c->z];
+            // 落点高度由地形决定（地狱的洞穴在不同高度），不能写死
+            $standY = $this->ensureNetherEntry();
             $tx = self::NETHER_X + 0.5;
-            $ty = (float) (self::NETHER_Y + 1);
+            $ty = (float) $standY;
             $tz = self::NETHER_Z + 0.5;
         }
 
@@ -225,9 +233,11 @@ trait PortalTrait
         // 【关键】发 Respawn 让客户端切到「地狱」维度。
         // 我们不真的建 DIM-1 存档（数据还是同一个世界），只是让客户端按维度 -1 渲染：
         // 天空变暗红、有雾、没有日夜。回去时再发一次维度 0。
-        // 记住现在在哪个维度，方便 1 秒后再补发一次
+        // 记住现在在哪个维度
         $c->portalDim = $atNether ? 0 : -1;
-        $c->portalResyncAt = microtime(true) + 1.0;
+        // 不再做「1 秒后补发 0x07」：补发会让客户端把世界整个丢掉重建，
+        // 玩家会看到地形闪一下重来。实测单发一次就能切过去，这个坑不值得留。
+        $c->portalResyncAt = 0.0;
 
         $c->send(self::C_RESPAWN, (new Writer())
             ->int($atNether ? 0 : -1)      // 目标维度
@@ -238,11 +248,74 @@ trait PortalTrait
         $c->send(self::C_POS_LOOK, (new Writer())
             ->double($c->x)->double($c->y)->double($c->z)
             ->float($c->yaw)->float($c->pitch)->byte(0));
-        // 位置变了，区块和数据都得重发
+        // 位置变了，区块和数据都得重发。
+        // 【必须清缓存】客户端收到 0x07 会把整个客户端世界丢掉重建，
+        // 但服务端还记着「这些区块发过了」，不清的话新维度一片虚空。
+        $c->sentChunks = [];
+        $c->chunkQueue = [];
         $c->resendInvAt = microtime(true) + 0.5;
         $this->queueChunks($c);
         $this->log(sprintf('  %s 传送 -> %.1f,%.1f,%.1f', $c->username, $c->x, $c->y, $c->z));
         $this->sendChat($c, ['text' => $atNether ? '回到主世界。' : '你来到了地狱。', 'color' => 'light_purple'], 1);
+    }
+
+    /**
+     * 维度自动同步：玩家坐标落在地狱带里就得是 dimension -1，否则是 0。
+     *
+     * 之前只有「站传送门」才会发 0x07，用 /tp 直接跳过去的玩家客户端还停在
+     * 主世界维度 —— 表现就是天空是蓝的、光照按主世界算、F3 里 Light 全是 0，
+     * 但 Biome 显示 Hell，看着特别怪。这个函数每 0.5 秒对一次。
+     */
+    private function tickDimSync(float $now): void
+    {
+        if ($now - $this->lastDimSync < 0.5) {
+            return;
+        }
+        $this->lastDimSync = $now;
+
+        foreach ($this->players() as $p) {
+            $want = $this->world->isNetherAt((int) floor($p->x), (int) floor($p->z)) ? -1 : 0;
+            if ($want === $p->portalDim) {
+                continue;
+            }
+
+            $p->portalDim = $want;
+            // 客户端收到 0x07 会把世界整个丢掉重建，区块缓存必须跟着清
+            $p->sentChunks = [];
+            $p->chunkQueue = [];
+
+            // /tp 到 y=44 那种位置会卡在石头里，屏幕全黑。
+            // 切换维度时顺手把玩家顶到最近的空位。
+            $bx = (int) floor($p->x);
+            $by = (int) floor($p->y);
+            $bz = (int) floor($p->z);
+            if ($this->blockIdAt($bx, $by, $bz) !== 0
+                || $this->blockIdAt($bx, $by + 1, $bz) !== 0) {
+                for ($k = 0; $k < 64; $k++) {
+                    if ($by + $k >= 127) {
+                        break;
+                    }
+                    if ($this->blockIdAt($bx, $by + $k, $bz) === 0
+                        && $this->blockIdAt($bx, $by + $k + 1, $bz) === 0) {
+                        $p->y = (float) ($by + $k);
+                        $this->log("  {$p->username} 卡在方块里，顶到 y={$p->y}");
+                        break;
+                    }
+                }
+            }
+
+            $p->send(self::C_RESPAWN, (new Writer())
+                ->int($want)
+                ->byte(1)
+                ->byte($p->gamemode)
+                ->string('default'));
+            $p->send(self::C_POS_LOOK, (new Writer())
+                ->double($p->x)->double($p->y)->double($p->z)
+                ->float($p->yaw)->float($p->pitch)->byte(0));
+            $this->queueChunks($p);
+
+            $this->log("  维度自动切到 {$want} -> {$p->username} @ {$p->x},{$p->z}");
+        }
     }
 
     /** 传送后 1 秒补发一次维度包（客户端偶尔把紧跟后面的包吞掉） */
@@ -253,6 +326,10 @@ trait PortalTrait
                 continue;
             }
             $p->portalResyncAt = 0.0;
+            // 补发 0x07 会让客户端再丢一次世界，所以区块缓存必须跟着清，
+            // 否则补发完就是一片虚空。
+            $p->sentChunks = [];
+            $p->chunkQueue = [];
             $p->send(self::C_RESPAWN, (new Writer())
                 ->int($p->portalDim)
                 ->byte(1)
@@ -266,63 +343,100 @@ trait PortalTrait
         }
     }
 
-    /** 现搭一个 24×24 的地狱岩平台（只搭一次） */
-    private function ensureNetherPlatform(): void
+    /**
+     * 在地狱地形里凿出入口房间 + 嵌回程门，返回玩家该站的 y。
+     *
+     * 地形是 NetherGenerator 生成的，落点落在一处天然空腔里 —— 但空腔的形状
+     * 靠不住（可能只有 3 格高、可能地板是岩浆），所以统一凿一个 7×7×5 的房间，
+     * 地面铺地狱岩，北墙嵌门。只做一次，位置记在 $netherY。
+     */
+    private function ensureNetherEntry(): int
     {
+        $ox = self::NETHER_X;
+        $oz = self::NETHER_Z;
+
+        // 先把落点周围 3×3 区块生成出来，后面查方块才查得到
+        for ($dz = -1; $dz <= 1; $dz++) {
+            for ($dx = -1; $dx <= 1; $dx++) {
+                $this->world->chunk(($ox >> 4) + $dx, ($oz >> 4) + $dz);
+            }
+        }
+
         if ($this->netherBuilt) {
-            return;
+            return $this->netherY;
         }
         $this->netherBuilt = true;
 
-        $ox = self::NETHER_X;
-        $oy = self::NETHER_Y;
-        $oz = self::NETHER_Z;
-
-        for ($dx = -12; $dx <= 12; $dx++) {
-            for ($dz = -12; $dz <= 12; $dz++) {
-                $chunk = $this->world->chunk(($ox + $dx) >> 4, ($oz + $dz) >> 4);
-                $chunk->setBlock(($ox + $dx) & 15, $oy - 1, ($oz + $dz) & 15, self::NETHERRACK, 0);
-                for ($dy = 0; $dy < 4; $dy++) {
-                    $chunk->setBlock(($ox + $dx) & 15, $oy + $dy, ($oz + $dz) & 15, 0, 0);
+        // 先找一块能站的地面：下方是实心（不是岩浆/火），上方留 4 格空间。
+        // 不能只找「连续 6 格空气」—— 原版地狱一大半是空的，那样会挑到半空中，
+        // 结果玩家站在一个凭空铺出来的孤岛上。
+        $standY = -1;
+        for ($y = 100; $y >= 33; $y--) {
+            $below = $this->blockIdAt($ox, $y, $oz);
+            if ($below === 0 || $below === 10 || $below === 11 || $below === 51) {
+                continue;
+            }
+            $ok = true;
+            for ($k = 1; $k <= 4; $k++) {
+                if ($this->blockIdAt($ox, $y + $k, $oz) !== 0) {
+                    $ok = false;
+                    break;
                 }
-                // 边缘围一圈地狱岩，看着像个洞窟
-                if (abs($dx) === 12 || abs($dz) === 12) {
-                    for ($dy = 0; $dy < 3; $dy++) {
-                        $chunk->setBlock(($ox + $dx) & 15, $oy + $dy, ($oz + $dz) & 15, self::NETHERRACK, 0);
-                    }
+            }
+            if ($ok) {
+                $standY = $y + 1;
+                break;
+            }
+        }
+        if ($standY < 0) {
+            $standY = 58;   // 那一列整根是石头，硬凿
+        }
+
+        $set = function (int $x, int $y, int $z, int $id, int $meta = 0): void {
+            $this->world->chunk($x >> 4, $z >> 4)->setBlock($x & 15, $y, $z & 15, $id, $meta);
+        };
+
+        $half = 3;
+        $top = $standY + 4;
+        for ($dx = -$half; $dx <= $half; $dx++) {
+            for ($dz = -$half; $dz <= $half; $dz++) {
+                $wx = $ox + $dx;
+                $wz = $oz + $dz;
+                // 只补缺口：本来就有地面的地方保留原样，别把原版地形铲平
+                $belowId = $this->blockIdAt($wx, $standY - 1, $wz);
+                if ($belowId === 0 || $belowId === 10 || $belowId === 11) {
+                    $set($wx, $standY - 1, $wz, self::NETHERRACK);
+                }
+                for ($y = $standY; $y <= $top; $y++) {
+                    $set($wx, $y, $wz, 0);
                 }
             }
         }
 
-        // 天花板：铺一层地狱岩，客户端看不到主世界的天空
-        for ($dx = -12; $dx <= 12; $dx++) {
-            for ($dz = -12; $dz <= 12; $dz++) {
-                $chunk = $this->world->chunk(($ox + $dx) >> 4, ($oz + $dz) >> 4);
-                $chunk->setBlock(($ox + $dx) & 15, $oy + 6, ($oz + $dz) & 15, self::NETHERRACK, 0);
-            }
-        }
+        // 房间顶上挂两块萤石：天然空腔可能一点光都没有
+        $set($ox + 2, $top, $oz, self::GLOWSTONE);
+        $set($ox - 2, $top, $oz, self::GLOWSTONE);
 
-        // 顶上挂几块萤石
-        foreach ([[-6, -6], [6, 6], [-6, 6], [6, -6]] as [$gx, $gz]) {
-            $chunk = $this->world->chunk(($ox + $gx) >> 4, ($oz + $gz) >> 4);
-            $chunk->setBlock(($ox + $gx) & 15, $oy + 3, ($oz + $gz) & 15, self::GLOWSTONE, 0);
-        }
-
-        // 回程门（4×5 黑曜石框 + 传送门方块）
+        // 回程门：嵌在北墙（z = oz-3），4 宽 × 5 高。
+        // 门框整体比地面低一格，这样玩家站在地面上时脚下那格就是传送门方块
+        // （tickPortals 查的是 floor(y) 和 floor(y)+1，浮点误差差一格也命中）。
         $px = $ox - 1;
         $pz = $oz - 3;
+        $base = $standY - 1;
         for ($i = 0; $i < 4; $i++) {
             for ($j = 0; $j < 5; $j++) {
                 $edge = $i === 0 || $i === 3 || $j === 0 || $j === 4;
-                $chunk = $this->world->chunk(($px + $i) >> 4, $pz >> 4);
                 if ($edge) {
-                    $chunk->setBlock(($px + $i) & 15, $oy + $j, $pz & 15, self::OBSIDIAN, 0);
-                } elseif ($i >= 1 && $i <= 2 && $j >= 1 && $j <= 3) {
-                    $chunk->setBlock(($px + $i) & 15, $oy + $j, $pz & 15, self::PORTAL_BLOCK, 2);
+                    $set($px + $i, $base + $j, $pz, self::OBSIDIAN);
+                } elseif ($j >= 1 && $j <= 3) {
+                    $set($px + $i, $base + $j, $pz, self::PORTAL_BLOCK, 2);
                 }
             }
         }
 
-        $this->log('  地狱平台已搭建 @ ' . $ox . ',' . $oy . ',' . $oz);
+        $this->netherY = $standY;
+        $this->log(sprintf('  地狱入口已就绪 @ %d,%d,%d', $ox, $standY, $oz));
+
+        return $standY;
     }
 }

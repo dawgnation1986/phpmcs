@@ -24,6 +24,14 @@ final class Connection
     public int $protocol = 0;
     public string $remote = '';
     public bool $closed = false;
+    /** WebSocket 状态：unknown=还没判 / ''=普通 TCP / handshake=收到 HTTP 头 / open=已握手 */
+    public string $ws = '';
+    /** WS 解帧缓冲区（半个帧会留在这里等下一拍） */
+    public string $wsBuf = '';
+    /** 这条连接是不是从 wss 端口进来的 */
+    public bool $tls = false;
+    /** TLS 握手是否已完成 */
+    public bool $tlsReady = true;
     public float $lastRead = 0.0;
 
     // 登录后
@@ -50,6 +58,8 @@ final class Connection
 
     /** 正在睡的床坐标 [x,y,z] */
     public ?array $sleepBed = null;
+    /** 睡过的床 -> 死亡重生点 [x,y,z]（原版 SpawnChunk 机制） */
+    public ?array $bedSpawn = null;
 
     /** 正在打开的酿造台 ['x','y','z','cursor'] */
     public ?array $brewing = null;
@@ -172,7 +182,9 @@ final class Connection
 
     public function send(int $packetId, Writer $payload): void
     {
-        $this->out .= Frame::encode(VarInt::encode($packetId) . $payload->toString());
+        $data = Frame::encode(VarInt::encode($packetId) . $payload->toString());
+        // 网页客户端要包成 WebSocket binary 帧；普通 TCP 直接写
+        $this->out .= $this->ws === 'open' ? WebSocket::frame($data) : $data;
     }
 
     public function flush(): bool
@@ -314,6 +326,10 @@ final class Server
         private int $maxPlayers = 20,
         private int $gamemode = 1,
         private int $viewDistance = 3,
+        private int $wssPort = 0,
+        private string $wssCert = '',
+        private string $wssKey = '',
+        private string $publicHost = '',
     ) {
         $this->startedAt = microtime(true);
         $this->lastKeepAlive = microtime(true);
@@ -355,6 +371,9 @@ final class Server
             $total, $saved, microtime(true) - $t0));
     }
 
+    /** @var resource|null wss 监听句柄（没配 wss-port 就是 null） */
+    private $tlsMaster = null;
+
     public function run(): void
     {
         // 先把出生点周围生成好，再开端口。
@@ -378,6 +397,35 @@ final class Server
         }
         stream_set_blocking($master, false);
 
+        // ---- 可选的 wss 监听 ----
+        // 用 tcp:// + ssl context：TLS 握手不在 accept 里做，而是在 pump 里
+        // 非阻塞地推进，否则一个慢客户端能把整个主循环卡死。
+        if ($this->wssPort > 0 && is_file($this->wssCert) && is_file($this->wssKey)) {
+            $tlsCtx = stream_context_create([
+                'ssl' => [
+                    'local_cert' => $this->wssCert,
+                    'local_pk' => $this->wssKey,
+                    'allow_self_signed' => true,
+                    'verify_peer' => false,
+                    'verify_peer_name' => false,
+                ],
+            ]);
+            $tls = @stream_socket_server(
+                "tcp://{$this->host}:{$this->wssPort}",
+                $tlsErrno,
+                $tlsErrstr,
+                STREAM_SERVER_BIND | STREAM_SERVER_LISTEN,
+                $tlsCtx
+            );
+            if ($tls !== false) {
+                stream_set_blocking($tls, false);
+                $this->tlsMaster = $tls;
+                $this->log("wss 监听 {$this->host}:{$this->wssPort}（自签证书 " . basename($this->wssCert) . '）');
+            } else {
+                $this->log("wss 端口 {$this->wssPort} 监听失败: [{$tlsErrno}] {$tlsErrstr}");
+            }
+        }
+
         $this->log('PHP MC 服务端已启动  ' . "{$this->host}:{$this->port}" . '  协议 ' . self::PROTOCOL);
         $this->log("MOTD: {$this->motd}");
         $this->log('存档: ' . ($this->world->created ? '新建' : '载入') . ' / 视距 '
@@ -385,6 +433,9 @@ final class Server
 
         while (true) {
             $read = [$master];
+            if ($this->tlsMaster !== null) {
+                $read[] = $this->tlsMaster;
+            }
             $write = [];
             foreach ($this->conns as $c) {
                 if ($c->closed) {
@@ -405,8 +456,9 @@ final class Server
 
             if ($ready > 0) {
                 foreach ($read as $sock) {
-                    if ($sock === $master) {
-                        $this->accept($master);
+                    if ($sock === $master
+                        || ($this->tlsMaster !== null && $sock === $this->tlsMaster)) {
+                        $this->accept($sock);
                         continue;
                     }
                     $c = $this->find($sock);
@@ -436,6 +488,9 @@ final class Server
         stream_set_read_buffer($sock, 0);
         stream_set_write_buffer($sock, 0);
         $c = new Connection($sock, (string) $peer);
+        $c->ws = 'unknown';
+        $c->tls = ($this->tlsMaster !== null && $master === $this->tlsMaster);
+        $c->tlsReady = !$c->tls;
         $this->conns[(int) $sock] = $c;
         $this->log("+ 连接 {$peer}");
     }
@@ -447,6 +502,25 @@ final class Server
 
     private function pump(Connection $c): void
     {
+        // wss 进来的连接，先把 TLS 握手推完才看得见明文。
+        // 非阻塞模式下 enable_crypto 返回 0 表示「还缺数据」，下一拍再来。
+        if (!$c->tlsReady) {
+            $r = @stream_socket_enable_crypto(
+                $c->socket,
+                true,
+                STREAM_CRYPTO_METHOD_TLS_SERVER
+            );
+            if ($r === true) {
+                $c->tlsReady = true;
+            } elseif ($r === 0) {
+                return;
+            } else {
+                $this->drop($c, 'TLS 握手失败');
+
+                return;
+            }
+        }
+
         $chunk = @fread($c->socket, 65536);
         if ($chunk === false || ($chunk === '' && feof($c->socket))) {
             $this->drop($c, '对端关闭');
@@ -455,10 +529,61 @@ final class Server
         if ($chunk === '') {
             return;
         }
-
-        $c->in .= $chunk;
         $c->lastRead = microtime(true);
 
+        // ---- WebSocket：首包看是不是 HTTP Upgrade，之后所有数据都过一遍拆帧 ----
+        if ($c->ws === 'unknown') {
+            $c->ws = WebSocket::looksLikeHttp($chunk) ? 'handshake' : '';
+            $this->log($c->ws === '' ? "  {$c->remote} 普通 TCP" : "  {$c->remote} WebSocket");
+        }
+
+        if ($c->ws === 'handshake') {
+            $c->wsBuf .= $chunk;
+            $end = strpos($c->wsBuf, "\r\n\r\n");
+            if ($end === false) {
+                if (strlen($c->wsBuf) > 8192) {
+                    $this->drop($c, 'WS 握手头过长');
+                }
+
+                return;
+            }
+            $header = substr($c->wsBuf, 0, $end + 4);
+            $c->wsBuf = substr($c->wsBuf, $end + 4);
+            $resp = WebSocket::handshakeResponse($header);
+            if ($resp === null) {
+                $this->drop($c, 'WS 握手缺 Sec-WebSocket-Key');
+
+                return;
+            }
+            $c->out .= $resp;
+            $c->ws = 'open';
+            $this->log("  {$c->remote} WebSocket 已握手");
+            if ($c->wsBuf === '') {
+                return;
+            }
+            // 握手的同一个包后面可能已经跟着第一帧 MC 数据
+            $chunk = $c->wsBuf;
+            $c->wsBuf = '';
+        }
+
+        if ($c->ws === 'open') {
+            $c->wsBuf .= $chunk;
+            [$data, $pongs, $closed] = WebSocket::decode($c->wsBuf);
+            foreach ($pongs as $p) {
+                $c->out .= WebSocket::pong($p);
+            }
+            if ($closed) {
+                $this->drop($c, 'WS 关闭帧');
+
+                return;
+            }
+            if ($data === '') {
+                return;
+            }
+            $chunk = $data;
+        }
+
+        $c->in .= $chunk;
         try {
             foreach (Frame::drain($c->in) as [$id, $r]) {
                 $this->handle($c, $id, $r);
@@ -705,6 +830,33 @@ final class Server
             'color' => 'yellow',
         ], 1);
         $this->sendChat($c, ['text' => '试试 /gm 1 | /gm 0，或者 /help', 'color' => 'gray'], 1);
+        $this->sendServerAddress($c);
+    }
+
+    /** 进服时把三种连接方式发给玩家，方便转发给朋友 */
+    private function sendServerAddress(Connection $c): void
+    {
+        $host = $this->publicHost !== '' ? $this->publicHost : $this->localIp();
+
+        $this->sendChat($c, ['text' => '服务器地址（可以转发给朋友）', 'color' => 'gold'], 1);
+        $this->sendChat($c, ['text' => '  Java 客户端   ' . $host . ':' . $this->port, 'color' => 'white'], 1);
+        $this->sendChat($c, ['text' => '  网页 / http   ws://' . $host . ':' . $this->port, 'color' => 'white'], 1);
+        if ($this->wssPort > 0) {
+            $this->sendChat($c, ['text' => '  网页 / https  wss://' . $host . ':' . $this->wssPort, 'color' => 'white'], 1);
+        }
+        $this->log("  已发送连接地址 host={$host}");
+    }
+
+    /** 没配 public-address 时，用本机内网 IP 顶上 */
+    private function localIp(): string
+    {
+        $name = gethostname();
+        if ($name === false) {
+            return '127.0.0.1';
+        }
+        $ip = @gethostbyname($name);
+
+        return ($ip !== '' && $ip !== $name) ? $ip : '127.0.0.1';
     }
 
     private function sendAbilities(Connection $c): void
@@ -1331,7 +1483,10 @@ final class Server
 
                 if ($hitId === 26) {
                     if ($this->isNight()) {
-                        // 躺下：0x0A Use Bed
+                        // 躺下：0x0A Use Bed。
+                        // 顺便把这张床记成重生点 —— 之前只做了「躺下」，
+                        // 死了还是回世界出生点，床白睡了。
+                        $c->bedSpawn = [(float) $x + 0.5, (float) $y + 1.0, (float) $z + 0.5];
                         $this->sleeping[$c->entityId] = microtime(true) + 5.0;
                         $bedPos = $this->packPositionBytes($x, $y, $z);
                         foreach ($this->players() as $sv) {
@@ -2298,8 +2453,11 @@ final class Server
             $this->spawnXpOrb($x + 0.5, $y + 0.3, $z + 0.5, $oreXp);
         }
         $meta = $state & 0x0F;
-        if ($id === 7) {
-            return; // 基岩挖不动
+        if ($id === 7 && $c->gamemode !== 1) {
+            // 原版基岩 hardness = -1，生存和创造都挖不动。
+            // 但这是私服：地狱上下各几层基岩，创造模式下连看都看不到里面，
+            // 纯粹挡路。所以只对生存模式保留这个限制，创造模式放行。
+            return;
         }
 
         // 挖掉方块后，把相邻的水/岩浆叫醒 —— 流体的扩散是队列驱动的，
@@ -2466,11 +2624,22 @@ final class Server
 
         [$dropId, $count] = self::dropOf($id, $meta);
 
+        // 精准采集（附魔 33）：原方块完整掉一个，不按倍率走
+        $silk = false;
+        $heldTool = $c->inventory[36 + $c->heldSlot] ?? null;
+        if (is_array($heldTool) && !empty($heldTool['ench'])) {
+            foreach ($heldTool['ench'] as $fe) {
+                if ((int) $fe['id'] === 33) {
+                    $silk = true;
+                    break;
+                }
+            }
+        }
+
         // 时运（35）：矿石类掉落数量 ×(1 + random(0..lvl))
-        if ($count > 0 && in_array($id, [16, 21, 56, 73, 129, 153], true)) {
-            $held = $c->inventory[36 + $c->heldSlot] ?? null;
-            if (is_array($held) && !empty($held['ench'])) {
-                foreach ($held['ench'] as $fe) {
+        if (!$silk && $count > 0 && in_array($id, [16, 21, 56, 73, 129, 153], true)) {
+            if (is_array($heldTool) && !empty($heldTool['ench'])) {
+                foreach ($heldTool['ench'] as $fe) {
                     if ((int) $fe['id'] === 35) {
                         $flv = (int) $fe['lvl'];
                         $count *= 1 + random_int(0, $flv);
@@ -2481,7 +2650,13 @@ final class Server
         }
 
         if ($dropId > 0 && $count > 0) {
-            $this->spawnDrop($x, $y, $z, $dropId, $count, $dropId === $id ? $meta : 0, $c);
+            if ($silk) {
+                // 精准采集：原样掉一块
+                $this->spawnDrop($x, $y, $z, $id, 1, $meta, $c);
+            } else {
+                // 服务器规则：每挖一块掉 2~5 个（保底 2，比原版慷慨）
+                $this->spawnDrop($x, $y, $z, $dropId, random_int(2, 5), $dropId === $id ? $meta : 0, $c);
+            }
         }
         foreach (self::extraDrops($id, $meta) as [$extraId, $extraCount]) {
             $this->spawnDrop($x, $y, $z, $extraId, $extraCount, 0, $c);
@@ -2838,6 +3013,10 @@ final class Server
             // 没熟只掉 1 个种子。
             return $meta >= 7 ? [296, 2 + random_int(0, 1)] : [295, 1];
         }
+        if ($id === 89) {
+            // 萤石挖掉掉萤石粉（348），不是萤石方块自己
+            return [348, 1];
+        }
         if ($id === 115) {
             // 地狱疣：成熟 2~4 个，没成熟 1 个
             return [372, $meta >= 3 ? 2 + random_int(0, 2) : 1];
@@ -2925,6 +3104,22 @@ final class Server
      */
     private function spawnDrop(int $x, int $y, int $z, int $id, int $count, int $meta, ?Connection $owner): void
     {
+        // 落点下面是岩浆的话，丢出来就烧没了 —— 用户反馈「有些地方挖了不掉」。
+        // 这种情况直接塞进挖它的人背包，别跟岩浆赌。
+        if ($owner !== null) {
+            for ($d = 1; $d <= 3; $d++) {
+                $below = $this->blockIdAt($x, $y - $d, $z);
+                if ($below === 10 || $below === 11) {
+                    $this->giveItem($owner, $id, $count, $meta);
+                    $this->log("  {$id}x{$count} 落点是岩浆，直接进 {$owner->username} 背包");
+                    return;
+                }
+                if ($below !== 0) {
+                    break;   // 碰到实心就不用再往下看了
+                }
+            }
+        }
+
         // 原版：spawnEntityInWorld(new EntityItem(world, x + 0.5, y + 0.5, z + 0.5, stack))
         $px = $x + 0.5;
         $py = $y + 0.5;
@@ -3233,7 +3428,7 @@ final class Server
                 $p->send(self::C_DESTROY_ENTITIES, (new Writer())
                     ->varInt(1)->varInt($eid));
             }
-            $this->giveItem($picker, $d['id'], $d['count'], $d['meta']);
+            $this->giveItem($picker, $d['id'], $d['count'], $d['meta'], $d['extra'] ?? []);
             $this->log(sprintf(
                 '  捡到 eid=%d 方块%d x%d -> %s',
                 $eid,
@@ -3264,11 +3459,12 @@ final class Server
             $this->sendSlot($c, $slot, $it);
         }
 
-        $this->toss($c, $it['id'], $n, $it['damage']);
+        $this->toss($c, $it['id'], $n, $it['damage'],
+            array_diff_key($it, ['id' => 0, 'count' => 0, 'damage' => 0]));
     }
 
     /** 朝视线方向扔出一个物品实体，客户端靠 Spawn Object 里的速度画抛物线 */
-    private function toss(Connection $c, int $id, int $count, int $damage): void
+    private function toss(Connection $c, int $id, int $count, int $damage, array $extra = []): void
     {
         $yaw = deg2rad($c->yaw);
         $pitch = deg2rad($c->pitch);
@@ -3280,7 +3476,7 @@ final class Server
         $pz = $c->z + $dz * 0.3;
 
         $this->throwItem($px, $py, $pz, $id, $count, $damage,
-            (int) ($dx * 2400), (int) ($dy * 2400 + 600), (int) ($dz * 2400));
+            (int) ($dx * 2400), (int) ($dy * 2400 + 600), (int) ($dz * 2400), 2.0, $extra);
     }
 
     /** 背包界面里 Q 键：光标上拿着东西时从光标丢 */
@@ -3320,7 +3516,11 @@ final class Server
         $p->send(self::C_ENTITY_METADATA, (new Writer())
             ->varInt($eid)
             ->byte((5 << 5) | 10)
-            ->short($d['id'])->byte($d['count'])->short($d['meta'])->byte(0)
+            ->raw($this->slotBytes([
+                'id' => $d['id'],
+                'count' => $d['count'],
+                'damage' => $d['meta'],
+            ] + ($d['extra'] ?? [])))
             ->unsignedByte(0x7F));
     }
 
@@ -3335,7 +3535,8 @@ final class Server
         int $vx,
         int $vy,
         int $vz,
-        float $delay = 2.0
+        float $delay = 2.0,
+        array $extra = []
     ): void {
         // 兜底：id 非法或数量为 0 的物品实体，客户端拿到会渲染空栈 → NPE 崩溃
         // （报错是「实体 null 导致崩溃」）。宁可不生成，也不能让客户端炸。
@@ -3361,10 +3562,12 @@ final class Server
                 // 客户端完全看不到，所以捡东西时位置对不上。
                 ->int(1)
                 ->short($vx)->short($vy)->short($vz));
+            // 用 slotBytes 拼物品栈：它会把 ench / display.Name 一起写进 NBT。
+            // 之前这里写死 byte(0)，丢出去的附魔装备就是白板。
             $p->send(self::C_ENTITY_METADATA, (new Writer())
                 ->varInt($eid)
                 ->byte((5 << 5) | 10)
-                ->short($id)->byte($count)->short($meta)->byte(0)
+                ->raw($this->slotBytes(['id' => $id, 'count' => $count, 'damage' => $meta] + $extra))
                 ->unsignedByte(0x7F));
         }
 
@@ -3373,6 +3576,7 @@ final class Server
             'id' => $id,
             'count' => $count,
             'meta' => $meta,
+            'extra' => $extra,
             'x' => $px,
             'y' => $py,
             'z' => $pz,
@@ -5128,19 +5332,50 @@ final class Server
         $c->health = max(0.0, $c->health - $dmg);
         $this->addExhaustion($c, 0.3);   // 原版：每次受伤 0.3
         $this->syncVitals($c);
-        $this->log("  {$c->username} 掉血 {$dmg}，剩 {$c->health}");
+        $this->log(sprintf('  %s 掉血 %d，剩 %.1f（来源 %s）',
+            $c->username, $dmg, $c->health,
+            debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 2)[1]['function'] ?? '?'));
 
         if ($c->health <= 0.0) {
-            [$sx, $sy, $sz] = $this->world->spawnPoint();
-            $c->x = $sx + 0.5;
-            $c->y = (float) $sy;
-            $c->z = $sz + 0.5;
+            // 重生点：睡过的床优先，否则世界出生点
+            if ($c->bedSpawn !== null) {
+                $c->x = (float) $c->bedSpawn[0];
+                $c->y = (float) $c->bedSpawn[1];
+                $c->z = (float) $c->bedSpawn[2];
+            } else {
+                [$sx, $sy, $sz] = $this->world->spawnPoint();
+                $c->x = (float) $sx + 0.5;
+                $c->y = (float) $sy;
+                $c->z = (float) $sz + 0.5;
+            }
+
             $c->health = 20.0;
+            $c->food = 20;
+            $c->saturation = 5.0;
             $c->fallFrom = -1.0;
+            $c->portalDim = 0;
+
+            // 客户端收到 0x07 会把世界整个丢掉重建：区块缓存要清，
+            // 背包也要重发，否则背包窗口里全是空的，得等他跨一次维度才恢复。
+            $c->sentChunks = [];
+            $c->chunkQueue = [];
+
+            $c->send(self::C_RESPAWN, (new Writer())
+                ->int(0)                       // 主世界
+                ->byte(1)                      // 难度 normal
+                ->byte($c->gamemode)
+                ->string('default'));
             $c->send(self::C_POS_LOOK, (new Writer())
                 ->double($c->x)->double($c->y)->double($c->z)
                 ->float(0)->float(0)->byte(0));
+            $this->queueChunks($c);
             $this->sendHealth($c);
+            $this->sendPlayerInventory($c);
+            $this->sendCursor($c);
+
+            $this->log(sprintf('  %s 死亡，重生到 %.1f,%.1f,%.1f%s',
+                $c->username, $c->x, $c->y, $c->z,
+                $c->bedSpawn !== null ? '（床上）' : '（世界出生点）'));
         }
     }
 
@@ -5257,6 +5492,7 @@ final class Server
         $this->tickFireDamage($now);
         $this->tickPortals($now);
         $this->tickPortalDimResync($now);
+        $this->tickDimSync($now);
         $this->tickFluids($now);
         $this->tickFurnaces($now);
         $this->tickBrewing($now);
