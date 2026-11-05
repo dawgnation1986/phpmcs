@@ -86,6 +86,8 @@ final class Connection
     public float $portalSince = 0.0;
     /** 当前客户端维度（0 主世界 / -1 地狱），回程要切回来 */
     public int $portalDim = 0;
+    /** 上次切维度的时刻，用来给传送门判定加冷却（不然会在门里来回弹） */
+    public float $portalDimAt = 0.0;
     /** 维度包补发时刻（>0 表示待补发） */
     public float $portalResyncAt = 0.0;
     /** 进传送门前的位置，回来时用 */
@@ -118,6 +120,10 @@ final class Connection
     public array $dragSlots = [];
     /** 进服 1 秒后补发一次背包：有的客户端会忽略第一次 Window Items */
     public float $resendInvAt = 0.0;
+    /** 进服 1 秒后重发一遍其他玩家的 Tab + Spawn（等客户端把 Tab 处理完） */
+    public float $resendPeersAt = 0.0;
+    /** 进服 1 秒后广播「我来了」给其他人（等他们把 Tab 处理完再收 Spawn） */
+    public float $announceAt = 0.0;
     /** 创造模式第一次挖方块时提示一次「不掉落」，别每次都刷 */
     public bool $hintedCreativeDrop = false;
     /** 上次自然回血的时间 */
@@ -223,6 +229,7 @@ final class Server
     use PortalTrait;
     use FluidTrait;
     use RedstoneTrait;
+    use EndTrait;
 
     public const PROTOCOL = 47;
 
@@ -243,6 +250,10 @@ final class Server
     private const C_SPAWN_PAINTING = 0x29;   // gs 在客户端的注册顺序是第 42 个 → 41 = 0x29
     private const C_TIME_UPDATE = 0x03;
     private const C_ENTITY_STATUS = 0x1A;
+    /** S->C Explosion：xyz(float×3) + 半径 + 记录数(int) + 记录 + 玩家速度(float×3) */
+    private const C_EXPLOSION = 0x27;
+    /** S->C Sound Effect：音效名 + xyz(int，坐标×8) + 音量 + 音调 */
+    private const C_SOUND_EFFECT = 0x29;
     /** S->C Spawn Experience Orb：eid + x/y/z(*32) + 经验值(short) */
     private const C_SPAWN_XP_ORB = 0x11;
     /** S->C Attach Entity：乘坐的实体 id + 载具 id（-1 = 下来）+ 拴绳字节 */
@@ -787,6 +798,8 @@ final class Server
         $this->syncVitals($c, true);
 
         $c->resendInvAt = microtime(true) + 1.0;
+        $c->resendPeersAt = microtime(true) + 1.0;
+        $c->announceAt = microtime(true) + 1.0;
 
         // 地上已有的掉落物要重新 Spawn 给这个连接。
         // 不补的话：客户端根本没有这些实体，东西「看不见但捡得到」——
@@ -802,12 +815,19 @@ final class Server
         $this->log("  载入背包 " . count($c->inventory) . ' 格');
 
         // 4) 标签列表 / 互相看见
+        // 给新玩家 c 的 Spawn 要延后到 1 秒后（见 resendPeersAt）：
+        // Spawn Player 不带名字，客户端拿 uuid 去 Tab 列表查，Tab 刚到还没进 map，
+        // Java 端会得到个 GameProfile 为 null 的实体。但也不能发两次 Spawn，
+        // eaglercraft 那种网页端收到重复的直接不渲染。
+        // 所以：Tab 立刻发，Spawn 只在 1 秒后发一次。
         foreach ($this->players() as $other) {
             $this->sendTabAdd($c, $other);
             if ($other !== $c) {
-                $this->sendSpawnPlayer($c, $other);
+                // 对方已经在游戏里，Tab 早有了，直接 Spawn
                 $this->sendTabAdd($other, $c);
-                $this->sendSpawnPlayer($other, $c);
+                // 但「别人看到新玩家」这一半也要延后：mineflayer 的
+                // named_entity_spawn 里有一道 `playerUUID in uuidToUsername` 的检查，
+                // player_info 还没处理完就把 Spawn 丢掉，而且不重试。
             }
         }
 
@@ -1423,6 +1443,17 @@ final class Server
             case 0x08: // 放方块 / 使用方块
                 [$x, $y, $z] = $this->unpackPosition($r->readLong());
                 $face = $r->readUnsignedByte();
+
+                // 末地：在基座四个边中点的基岩上放末影水晶，四颗齐了重召龙
+                if ($this->tryPlaceSummonCrystal($c, $x, $y, $z)) {
+                    break;
+                }
+
+                // 末地传送门框架：嵌末影之眼，12 颗齐了激活
+                if ($this->tryActivateEndPortal($c, $x, $y, $z)) {
+                    break;
+                }
+
                 // 排查用：右键任何东西都会打这一行（含手上物品 id）
                 if ($this->debugLog) {
                     $hm = $c->inventory[36 + $c->heldSlot] ?? null;
@@ -2039,6 +2070,23 @@ final class Server
                     break;
                 }
                 if ($action === 1) {          // 1 = 攻击
+                    // 打末影龙（龙是单个 eid，客户端自己画七个部位）
+                    // 客户端打的是龙的「部位」：EntityDragon.setEntityId 会把七个 part
+                    // 设成 id+1..id+7，所以 targetEid 不会等于本体 eid。
+                    if ($this->dragon !== null
+                        && $targetEid >= $this->dragon['eid']
+                        && $targetEid <= $this->dragon['eid'] + 7) {
+                        $heldD = $c->inventory[36 + $c->heldSlot] ?? null;
+                        $dmgD = $heldD === null ? 1 : (self::WEAPON_DAMAGE[(int) $heldD['id']] ?? 1);
+                        $this->hurtDragon($dmgD);
+                        $this->addExhaustion($c, 0.3);
+                        break;
+                    }
+                    // 打末影水晶：炸掉 + 周围掉血
+                    if (isset($this->endCrystals[$targetEid])) {
+                        $this->destroyEndCrystal($targetEid);
+                        break;
+                    }
                     // 打盔甲架：销毁 + 掉一个架
                     if (isset($this->armorStands[$targetEid])) {
                         [$asx, $asy, $asz] = $this->armorStands[$targetEid];
@@ -3749,6 +3797,31 @@ final class Server
                     'text' => '模式已切换：' . self::gameModeName($gm),
                     'color' => 'green',
                 ], 1);
+                break;
+
+            case 'dragon':
+                // 龙已经在场上就别再发一次 Spawn Mob —— 客户端会同 eid 重建实体，
+                // 看起来就是「龙被重新召唤回出生点了」。
+                if ($this->dragon !== null) {
+                    $this->sendChat($c, ['text' => '末影龙已经在场上了', 'color' => 'gray'], 1);
+                    break;
+                }
+                $this->spawnDragon();
+                $this->sendDragonSpawn($c);
+                $this->sendChat($c, ['text' => '末影龙已生成', 'color' => 'light_purple'], 1);
+                break;
+
+            case 'end':
+                // 末地就在世界坐标 300000,300000，中央岛的平台在 y=65
+                // 基座在 (0,64,0)，落脚平台在基座南边 8 格
+                $c->x = 300000.5;
+                $c->y = 65.0;
+                $c->z = 300008.5;
+                $c->fallFrom = -1.0;
+                $c->send(self::C_POS_LOOK, (new Writer())
+                    ->double($c->x)->double($c->y)->double($c->z)
+                    ->float($c->yaw)->float($c->pitch)->byte(0));
+                $this->sendChat($c, ['text' => '传送到末地中央岛', 'color' => 'light_purple'], 1);
                 break;
 
             case 'tp':
@@ -5493,6 +5566,8 @@ final class Server
         $this->tickPortals($now);
         $this->tickPortalDimResync($now);
         $this->tickDimSync($now);
+        $this->tickDragon($now);
+        $this->tickEndPortal($now);
         $this->tickFluids($now);
         $this->tickFurnaces($now);
         $this->tickBrewing($now);
@@ -5717,6 +5792,35 @@ final class Server
         foreach ($this->players() as $p) {
             if ($p->chunkQueue !== []) {
                 $this->flushChunkQueue($p);
+            }
+            // 1 秒后广播「我来了」：先 Tab 再 Spawn，两边都等过了处理窗口
+            if ($p->announceAt > 0 && $now >= $p->announceAt) {
+                $p->announceAt = 0.0;
+                foreach ($this->players() as $other) {
+                    if ($other === $p) {
+                        continue;
+                    }
+                    $this->sendTabAdd($other, $p);
+                    $this->sendSpawnPlayer($other, $p);
+                }
+            }
+            // 1 秒后重建：先拆实体再 Spawn。
+            //
+            // 两边要求不一样：Java 端建实体时会拿 uuid 去 Tab 列表查 GameProfile，
+            // 查不到就是 null（没名字没皮肤），而且之后同 eid 的 Spawn 它直接忽略；
+            // eaglercraft 反过来，重复 Spawn 会丢实体。
+            // 唯一能让两边都拿到名字的办法：Tab 先进 map，然后**销毁重建一次**。
+            if ($p->resendPeersAt > 0 && $now >= $p->resendPeersAt) {
+                $p->resendPeersAt = 0.0;
+                foreach ($this->players() as $other) {
+                    if ($other === $p) {
+                        continue;
+                    }
+                    $p->send(self::C_DESTROY_ENTITIES, (new Writer())
+                        ->varInt(1)->varInt($other->entityId));
+                    $this->sendTabAdd($p, $other);
+                    $this->sendSpawnPlayer($p, $other);
+                }
             }
             if ($p->resendInvAt > 0 && $now >= $p->resendInvAt) {
                 $p->resendInvAt = 0.0;

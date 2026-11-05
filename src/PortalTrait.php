@@ -274,12 +274,21 @@ trait PortalTrait
         $this->lastDimSync = $now;
 
         foreach ($this->players() as $p) {
-            $want = $this->world->isNetherAt((int) floor($p->x), (int) floor($p->z)) ? -1 : 0;
+            $fx = (int) floor($p->x);
+            $fz = (int) floor($p->z);
+            if ($this->world->isEndAt($fx, $fz)) {
+                $want = 1;          // 末地
+            } elseif ($this->world->isNetherAt($fx, $fz)) {
+                $want = -1;         // 地狱
+            } else {
+                $want = 0;          // 主世界
+            }
             if ($want === $p->portalDim) {
                 continue;
             }
 
             $p->portalDim = $want;
+            $p->portalDimAt = microtime(true);
             // 客户端收到 0x07 会把世界整个丢掉重建，区块缓存必须跟着清
             $p->sentChunks = [];
             $p->chunkQueue = [];
@@ -313,6 +322,14 @@ trait PortalTrait
                 ->double($p->x)->double($p->y)->double($p->z)
                 ->float($p->yaw)->float($p->pitch)->byte(0));
             $this->queueChunks($p);
+
+            // 进末地：把水晶实体发给他
+            if ($want === 1) {
+                $this->spawnEndCrystals();
+                $this->sendEndCrystalsTo($p);
+                $this->spawnDragon();
+                $this->sendDragonSpawn($p);
+            }
 
             $this->log("  维度自动切到 {$want} -> {$p->username} @ {$p->x},{$p->z}");
         }

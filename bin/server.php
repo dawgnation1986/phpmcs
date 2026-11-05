@@ -31,6 +31,7 @@ foreach (glob(__DIR__ . '/../src/World/Layer/*.php') as $__f) {
 require __DIR__ . '/../src/World/TerrainGenerator.php';
 require __DIR__ . '/../src/World/NetherCaveGenerator.php';
 require __DIR__ . '/../src/World/NetherGenerator.php';
+require __DIR__ . '/../src/World/EndGenerator.php';
 require __DIR__ . '/../src/World/AnvilWorld.php';
 require __DIR__ . '/../src/World/ChestStore.php';
 require __DIR__ . '/../src/ChestTrait.php';
@@ -49,6 +50,7 @@ require __DIR__ . '/../src/AnvilTrait.php';
 require __DIR__ . '/../src/PortalTrait.php';
 require __DIR__ . '/../src/FluidTrait.php';
 require __DIR__ . '/../src/RedstoneTrait.php';
+require __DIR__ . '/../src/EndTrait.php';
 require __DIR__ . '/../src/RecipeTable.php';
 require __DIR__ . '/../src/ItemIds.php';
 require __DIR__ . '/../src/CraftingTrait.php';

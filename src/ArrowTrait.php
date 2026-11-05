@@ -177,6 +177,37 @@ trait ArrowTrait
                         break;
                     }
                 }
+
+                // 命中末影龙。龙的本体碰撞箱是 16×8，用 8 格球形判定足够松
+                if (!$hit && $this->dragon !== null) {
+                    $dd = sqrt(
+                        ($this->dragon['x'] - $x) ** 2
+                        + ($this->dragon['y'] - $y) ** 2
+                        + ($this->dragon['z'] - $z) ** 2
+                    );
+                    if ($dd < 8.0) {
+                        $this->log("  箭 eid={$eid} 命中末影龙");
+                        $this->hurtDragon(6);
+                        $hit = true;
+                    }
+                }
+
+                // 命中末影水晶：一箭打爆
+                if (!$hit && $this->endCrystals !== []) {
+                    foreach ($this->endCrystals as $ceid => $c) {
+                        $cd = sqrt(
+                            ($c['x'] - $x) ** 2
+                            + ($c['y'] - $y) ** 2
+                            + ($c['z'] - $z) ** 2
+                        );
+                        if ($cd < 2.0) {
+                            $this->log("  箭 eid={$eid} 命中末地水晶 {$ceid}");
+                            $this->destroyEndCrystal($ceid);
+                            $hit = true;
+                            break;
+                        }
+                    }
+                }
             }
 
             if ($this->arrows[$eid][7] <= 3) {

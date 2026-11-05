@@ -24,6 +24,12 @@ final class AnvilWorld
     /** 地狱带半径（区块数），512 区块 = 8192 格见方，走不到边 */
     public const NETHER_RADIUS = 512;
 
+    /** 末地带中心（区块坐标）：世界坐标 300000,300000 */
+    public const END_CX = 18750;
+    public const END_CZ = 18750;
+    /** 末地岛半径约 1000 格，留点余量 */
+    public const END_RADIUS = 128;
+
     private Tag $level;
     /** @var array<string, Chunk> */
     private array $chunks = [];
@@ -38,6 +44,8 @@ final class AnvilWorld
     private TerrainGenerator $generator;
     /** 地狱地形生成器（只在地狱坐标带里用） */
     private NetherGenerator $nether;
+    /** 末地地形生成器 */
+    private EndGenerator $end;
     /** 地狱区块生成计数，日志只记前几个，不然一次视野 400 多个区块刷屏 */
     private int $netherGenCount = 0;
     /** 旧生成器写过、等待迁移落盘的区块 key */
@@ -67,6 +75,7 @@ final class AnvilWorld
 
         $this->generator = new TerrainGenerator($this->seed);
         $this->nether = new NetherGenerator($this->seed);
+        $this->end = new EndGenerator($this->seed, self::END_CX, self::END_CZ);
         // 出生点掉海里就挪到最近的陆地（必须在 generator 建好之后，
         // 它要查群系；放前面会撞上「属性未初始化」）
         $this->ensureSpawnOnLand();
@@ -259,13 +268,19 @@ final class AnvilWorld
         }
         // 地狱坐标带走独立的地形生成器，否则「挖穿天花板看到主世界」
         $isNether = $this->isNetherChunk($cx, $cz);
+        $isEnd = $this->isEndChunk($cx, $cz);
         if ($isNether && $this->netherGenCount < 3) {
             $this->netherGenCount++;
             error_log(sprintf('[phpmcs] 地狱地形生成 %d,%d（第 %d 个）', $cx, $cz, $this->netherGenCount));
         }
-        $chunk = new Chunk($cx, $cz, $isNether
-            ? $this->nether->generate($cx, $cz)
-            : $this->generator->generate($cx, $cz));
+        if ($isEnd) {
+            $tag = $this->end->generate($cx, $cz);
+        } elseif ($isNether) {
+            $tag = $this->nether->generate($cx, $cz);
+        } else {
+            $tag = $this->generator->generate($cx, $cz);
+        }
+        $chunk = new Chunk($cx, $cz, $tag);
         // 磁盘上本来就没有这个区块：生成后落盘，下次直接读，不再临时生成。
         // 条目存在但读坏了就先不写，避免把可能有救的数据覆盖掉。
         $chunk->dirty = !$this->hasChunkEntry($cx, $cz);
@@ -981,6 +996,9 @@ final class AnvilWorld
         if ($this->isNetherChunk($cx, $cz)) {
             return array_fill(0, 256, 8);   // 8 = Hell
         }
+        if ($this->isEndChunk($cx, $cz)) {
+            return array_fill(0, 256, 9);   // 9 = The End
+        }
 
         return $this->generator->biomeGrid($cx, $cz);
     }
@@ -1002,6 +1020,19 @@ final class AnvilWorld
     public function isNetherAt(int $x, int $z): bool
     {
         return $this->isNetherChunk($x >> 4, $z >> 4);
+    }
+
+    /** 这一格区块是不是末地 */
+    public function isEndChunk(int $cx, int $cz): bool
+    {
+        return abs($cx - self::END_CX) <= self::END_RADIUS
+            && abs($cz - self::END_CZ) <= self::END_RADIUS;
+    }
+
+    /** 世界坐标是不是在末地带里 */
+    public function isEndAt(int $x, int $z): bool
+    {
+        return $this->isEndChunk($x >> 4, $z >> 4);
     }
 
     public function seed(): int
