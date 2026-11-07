@@ -295,6 +295,9 @@ final class Server
     private const C_ABILITIES = 0x39;
     private const C_DISCONNECT = 0x40;
 
+    /** 插件系统：plugins/ 下的文件在启动时载入 */
+    private PluginManager $plugins;
+
     /** @var array<int, Connection> */
     private array $conns = [];
 
@@ -345,6 +348,7 @@ final class Server
         $this->startedAt = microtime(true);
         $this->lastKeepAlive = microtime(true);
         $this->lastSave = microtime(true);
+        $this->plugins = new PluginManager();
     }
 
     /**
@@ -844,6 +848,7 @@ final class Server
             ->byte(0));
 
         $this->log("  进服 {$c->username}  eid={$c->entityId}  at {$c->x},{$c->y},{$c->z}");
+        $this->emit('onJoin', $this, $c);
         $this->broadcastChat('§e' . $c->username . ' 加入了游戏', 1);
         $this->sendChat($c, [
             'text' => '欢迎。存档：' . $this->world->levelName(),
@@ -895,6 +900,74 @@ final class Server
     }
 
     /** @return Connection[] */
+    // ---------------- 插件 API ----------------
+    // 插件拿到的是 Server 实例，但内部方法几乎都是 private。
+    // 这里放一层薄封装，只暴露「做事」需要的那些，别的一概不给。
+
+    public function loadPlugins(string $dir): void
+    {
+        $this->plugins->loadDir($dir);
+        $n = $this->plugins->count();
+        if ($n === 0) {
+            $this->log('  没装插件');
+
+            return;
+        }
+        $this->log(sprintf('  插件 %d 个：%s', $n, implode('、', $this->plugins->names())));
+        $this->log('  注册的事件：' . implode('、', $this->plugins->events()));
+    }
+
+    public function emit(string $event, mixed ...$args): void
+    {
+        $this->plugins->emit($event, ...$args);
+    }
+
+    public function apiGiveItem(Connection $p, int $id, int $count, array $extra = []): void
+    {
+        $this->giveItem($p, $id, $count, 0, $extra);
+    }
+
+    public function apiChat(Connection $p, string $text): void
+    {
+        $this->sendChat($p, ['text' => $text], 1);
+    }
+
+    public function apiBroadcast(string $text): void
+    {
+        $this->broadcastChat($text);
+    }
+
+    /** @return Connection[] */
+    public function apiPlayers(): array
+    {
+        return $this->players();
+    }
+
+    public function apiBlock(int $x, int $y, int $z): int
+    {
+        return $this->blockIdAt($x, $y, $z);
+    }
+
+    public function apiSetBlock(int $x, int $y, int $z, int $id, int $meta = 0): void
+    {
+        $this->world->chunk($x >> 4, $z >> 4)->setBlock($x & 15, $y, $z & 15, $id, $meta);
+        foreach ($this->players() as $p) {
+            $p->send(self::C_BLOCK_CHANGE, (new Writer())
+                ->raw($this->packPositionBytes($x, $y, $z))
+                ->varInt((($id & 0xFFF) << 4) | ($meta & 15)));
+        }
+    }
+
+    public function apiLog(string $msg): void
+    {
+        $this->log('  [plugin] ' . $msg);
+    }
+
+    public function apiWorld(): AnvilWorld
+    {
+        return $this->world;
+    }
+
     private function players(): array
     {
         $out = [];
@@ -1362,6 +1435,7 @@ final class Server
                 if ($msg === '') {
                     break;
                 }
+                $this->emit('onChat', $this, $c, $msg);
                 if ($msg[0] === '/') {
                     $this->command($c, $msg);
                 } else {
@@ -2494,6 +2568,7 @@ final class Server
             return;
         }
         $id = $state >> 4;
+        $this->emit('onBlockBreak', $this, $c, $x, $y, $z, $id);
 
         // 挖矿经验（原版数值）：煤1 青金石3 钻石4 红石3 绿宝石4 石英1
         $oreXp = [16 => 1, 21 => 3, 56 => 4, 73 => 3, 129 => 4, 153 => 1][$id] ?? 0;

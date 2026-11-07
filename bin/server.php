@@ -55,6 +55,7 @@ require __DIR__ . '/../src/RecipeTable.php';
 require __DIR__ . '/../src/ItemIds.php';
 require __DIR__ . '/../src/CraftingTrait.php';
 require __DIR__ . '/../src/Skin/Skins.php';
+require __DIR__ . '/../src/PluginManager.php';
 require __DIR__ . '/../src/Server.php';
 
 $port = 25565;
@@ -143,4 +144,5 @@ $server = new PhpMc\Server('0.0.0.0', $port, $motd, $world, $skins, $chests, $ma
 $world->addTileProvider([$server, 'furnaceTilesForChunk']);
 $world->addTileProvider([$server, 'spawnerTilesForChunk']);
 $world->addTileProvider([$server, 'bannerTilesForChunk']);
+$server->loadPlugins(__DIR__ . '/../plugins');
 $server->run();
